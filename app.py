@@ -1,83 +1,120 @@
 import streamlit as st
 import pandas as pd
 import os
-import random
+import glob
+from langchain_community.document_loaders import PyPDFLoader
 from langchain_google_genai import ChatGoogleGenerativeAI
 from langchain_core.prompts import PromptTemplate
 
 # -----------------------------------------------------------------------------
-# [1] 서버 설정 및 환경 변수 (Render 설정에서 GOOGLE_API_KEY를 추가해야 합니다)
+# [1] 서버 설정 및 데이터 로드
 # -----------------------------------------------------------------------------
 st.set_page_config(page_title="KW-강의마스터", page_icon="🎓", layout="wide")
 api_key = os.environ.get("GOOGLE_API_KEY", "")
 
-# -----------------------------------------------------------------------------
-# [2] Pre-loaded Data (학교 지식 베이스 및 강의 정보)
-# -----------------------------------------------------------------------------
-# 실제 운영 시에는 PDF에서 추출한 텍스트 파일이나 CSV를 로드합니다.
-SCHOOL_RULES = """
-[광운대학교 학사 규정 요약]
-- 졸업 이수 학점: 총 130학점 이상 (2023학번 기준)
-- 전공 필수: 학과별 상이하나 보통 21~30학점
-- 교양 필수: 정보와사회, 광운인성, 대학영어 등 포함 15학점
-- 영어 졸업 인증: 토익 700점 이상 또는 교내 대체 강좌 이수
-- 재수강: C+ 이하 과목만 가능, 최대 성적 A0 제한
-"""
+# 지식 베이스 로딩 함수 (data 폴더의 모든 PDF 읽기)
+@st.cache_resource(show_spinner="학교 정보를 학습하는 중입니다... (약 1분 소요)")
+def load_knowledge_base():
+    all_content = ""
+    
+    # 'data' 폴더가 없으면 생성 (에러 방지용)
+    if not os.path.exists("data"):
+        os.makedirs("data")
+        return ""
 
-# 가상의 이번 학기 개설 강좌 데이터 (시간표 생성용)
+    # data 폴더 안의 모든 .pdf 파일 찾기
+    pdf_files = glob.glob("data/*.pdf")
+    
+    if not pdf_files:
+        return ""
+
+    # 각 PDF 파일을 순서대로 읽어서 텍스트 합치기
+    for pdf_file in pdf_files:
+        try:
+            loader = PyPDFLoader(pdf_file)
+            pages = loader.load_and_split()
+            
+            # 파일명을 헤더로 추가해서 AI가 출처를 알게 함
+            filename = os.path.basename(pdf_file)
+            all_content += f"\n\n--- [문서 시작: {filename}] ---\n"
+            
+            for page in pages:
+                all_content += page.page_content
+                
+        except Exception as e:
+            print(f"Error loading {pdf_file}: {e}")
+            continue
+            
+    return all_content
+
+# 앱 시작 시 한 번만 실행되어 모든 PDF를 메모리에 올림
+PRE_LEARNED_DATA = load_knowledge_base()
+
+# 강의 데이터베이스 (시간표용 - 이전과 동일)
 @st.cache_data
 def load_course_db():
     return pd.DataFrame([
         {"과목명": "인공지능기초", "교수": "김교수", "시간": "월1,2,3", "영역": "전공", "과제비중": 40, "시험비중": 60, "팀플": "유"},
         {"과목명": "전자회로1", "교수": "이교수", "시간": "화4,5,6", "영역": "전공", "과제비중": 20, "시험비중": 80, "팀플": "무"},
-        {"과목명": "알고리즘", "교수": "박교수", "시간": "수1,2,3", "영역": "전공", "과제비중": 50, "시험비중": 50, "팀플": "무"},
         {"과목명": "데이터베이스", "교수": "최교수", "시간": "목4,5,6", "영역": "전공", "과제비중": 30, "시험비중": 70, "팀플": "유"},
         {"과목명": "광운인성", "교수": "정교수", "시간": "금1,2", "영역": "교양", "과제비중": 10, "시험비중": 90, "팀플": "무"},
-        {"과목명": "대학영어", "교수": "Brown", "시간": "월7,8", "영역": "교양", "과제비중": 30, "시험비중": 70, "팀플": "유"},
-        {"과목명": "창업의이해", "교수": "송교수", "시간": "화1,2", "영역": "교양", "과제비중": 50, "시험비중": 50, "팀플": "유"},
-        {"과목명": "컴퓨터네트워크", "교수": "한교수", "시간": "수7,8,9", "영역": "전공", "과제비중": 40, "시험비중": 60, "팀플": "무"},
+        {"과목명": "대학영어", "교수": "Brown", "시간": "월7,8", "영역": "교양", "과제비중": 30, "시험비중": 70, "팀플": "유"}
     ])
 
 course_db = load_course_db()
 
 # -----------------------------------------------------------------------------
-# [3] AI 엔진 설정
+# [2] AI 엔진
 # -----------------------------------------------------------------------------
-def ask_ai(question, context=""):
+def ask_ai(question):
     if not api_key:
-        return "⚠️ 현재 서버에 API Key가 설정되지 않았습니다. Render 환경 변수를 확인해주세요."
+        return "⚠️ 서버에 API Key가 설정되지 않았습니다. (Render Settings 확인)"
     
-    try:
-        llm = ChatGoogleGenerativeAI(model="gemini-1.5-flash", temperature=0.1)
-        template = """
-        너는 광운대학교 학사지원팀 소속 전문 비서야. 
-        아래 제공된 [학교 정보]를 바탕으로 학생의 질문에 답변해줘.
-        제공되지 않은 정보에 대해서는 아는 척 하지 말고 정중히 답변해.
+    if not PRE_LEARNED_DATA: 
+        return "⚠️ 학습된 데이터가 없습니다. VS Code의 'data' 폴더에 PDF 파일을 넣어주세요."
 
-        [학교 정보]
+    try:
+        # 정보가 많으므로 temperature를 0으로 설정하여 팩트 위주 답변
+        llm = ChatGoogleGenerativeAI(model="gemini-1.5-flash", temperature=0)
+        
+        template = """
+        너는 광운대학교 학사 전문 상담 비서 'KW-강의마스터'야.
+        너는 아래 제공된 [학습된 PDF 문서들]의 내용을 완벽하게 숙지하고 있어.
+        
+        [지시사항]
+        1. 질문에 대한 답변은 오직 제공된 문서 내용에 기반해서 작성해.
+        2. 답변할 때 "참고한 문서의 이름(예: 장학금규정.pdf)"을 언급해주면 더 좋아.
+        3. 문서에 없는 내용은 솔직하게 모른다고 답해.
+
+        [학습된 PDF 문서들]
         {context}
 
-        [학생 질문]
+        [학생의 질문]
         {question}
         """
         prompt = PromptTemplate(template=template, input_variables=["context", "question"])
         chain = prompt | llm
-        response = chain.invoke({"context": context, "question": question})
+        response = chain.invoke({"context": PRE_LEARNED_DATA, "question": question})
         return response.content
     except Exception as e:
-        return f"❌ AI 호출 중 오류 발생: {str(e)}"
+        return f"❌ AI 오류: {str(e)}"
 
 # -----------------------------------------------------------------------------
-# [4] UI 레이아웃
+# [3] UI 구성
 # -----------------------------------------------------------------------------
 st.sidebar.title("🎓 KW-강의마스터")
-st.sidebar.markdown("광운대 학업을 위한 올인원 비서")
-menu = st.sidebar.radio("기능 선택", ["AI 학사 상담", "졸업/이수 현황", "스마트 시간표 생성", "강의 인사이트"])
+# glob 모듈이 없는 경우 대비
+try:
+    pdf_count = len(glob.glob("data/*.pdf"))
+except:
+    pdf_count = 0
+st.sidebar.info(f"📚 현재 {pdf_count}개의 문서를 학습했습니다.")
 
-# === Tab 1: AI 학사 상담 ===
-if menu == "AI 학사 상담":
-    st.header("🤖 AI 학사 지원 비서")
-    st.info("광운대 학사 규정집과 수강신청 자료를 모두 학습한 상태입니다.")
+menu = st.sidebar.radio("메뉴", ["AI 학사 지식인", "이수학점 진단", "스마트 시간표"])
+
+if menu == "AI 학사 지식인":
+    st.header("🤖 AI 학사 지식인")
+    st.caption("업로드된 PDF 문서들을 기반으로 답변합니다.")
     
     if "messages" not in st.session_state:
         st.session_state.messages = []
@@ -86,100 +123,30 @@ if menu == "AI 학사 상담":
         with st.chat_message(msg["role"]):
             st.markdown(msg["content"])
 
-    if prompt := st.chat_input("졸업 요건이나 수강신청에 대해 물어보세요."):
-        st.session_state.messages.append({"role": "user", "content": prompt})
+    if user_input := st.chat_input("질문하세요 (예: 이번 학기 장학금 기준이 뭐야?)"):
+        st.session_state.messages.append({"role": "user", "content": user_input})
         with st.chat_message("user"):
-            st.markdown(prompt)
+            st.markdown(user_input)
 
         with st.chat_message("assistant"):
-            response = ask_ai(prompt, SCHOOL_RULES)
-            st.markdown(response)
-        st.session_state.messages.append({"role": "assistant", "content": response})
+            with st.spinner("문서를 검색 중입니다..."):
+                answer = ask_ai(user_input)
+                st.markdown(answer)
+        st.session_state.messages.append({"role": "assistant", "content": answer})
 
-# === Tab 2: 졸업/이수 현황 ===
-elif menu == "졸업/이수 현황":
-    st.header("📊 이수 학점 분석")
-    col1, col2 = st.columns([1, 1])
-    
-    with col1:
-        st.subheader("내 학점 입력")
-        major_done = st.number_input("전공 이수 학점", 0, 130, 45)
-        ge_done = st.number_input("교양 이수 학점", 0, 130, 20)
-        etc_done = st.number_input("일반 선택 학점", 0, 130, 10)
-        
-    with col2:
-        total_done = major_done + ge_done + etc_done
-        st.subheader("분석 결과")
-        st.metric("총 이수 학점", f"{total_done} / 130")
-        
-        progress = total_done / 130
-        st.progress(progress)
-        
-        if total_done < 130:
-            st.warning(f"졸업까지 {130 - total_done}학점 더 필요합니다.")
-        else:
-            st.success("졸업 최소 학점을 충족했습니다!")
-
-    st.divider()
-    st.subheader("영역별 피드백")
-    if major_done < 65:
-        st.write("📍 **전공:** 전공 학점이 부족합니다. 다음 학기에는 전공 필수 위주로 수강하세요.")
-    if ge_done < 35:
-        st.write("📍 **교양:** 교양 학점이 부족합니다. 핵심 교양 영역을 확인하세요.")
-
-# === Tab 3: 스마트 시간표 생성 ===
-elif menu == "스마트 시간표 생성":
-    st.header("📅 맞춤형 시간표 추천")
-    st.write("내가 원하는 조건을 설정하면 AI가 강의를 조합해드립니다.")
-    
+elif menu == "이수학점 진단":
+    st.header("📊 졸업 이수 현황")
     col1, col2 = st.columns(2)
     with col1:
-        avoid_day = st.multiselect("피하고 싶은 요일", ["월", "화", "수", "목", "금"])
-        avoid_morning = st.checkbox("1교시(9:00) 수업 제외")
-    
+        major = st.number_input("전공 이수 학점", 0, 130, 45)
+        ge = st.number_input("교양 이수 학점", 0, 130, 20)
     with col2:
-        min_courses = st.slider("최소 수강 과목 수", 3, 7, 5)
-        
-    if st.button("시간표 자동 생성"):
-        # 필터링 로직
-        filtered_db = course_db.copy()
-        
-        # 요일 필터
-        for day in avoid_day:
-            filtered_db = filtered_db[~filtered_db['시간'].str.contains(day)]
-            
-        # 1교시 필터
-        if avoid_morning:
-            filtered_db = filtered_db[~filtered_db['시간'].str.contains('1')]
-            
-        if len(filtered_db) < min_courses:
-            st.error("조건에 맞는 강의가 부족합니다. 조건을 완화해주세요.")
-        else:
-            # 랜덤 샘플링 (시간 중복 체크는 데모용으로 간소화)
-            recommendation = filtered_db.sample(n=min_courses)
-            st.success(f"조건을 만족하는 {min_courses}개 과목을 찾았습니다!")
-            st.table(recommendation[['과목명', '교수', '시간', '영역']])
-            st.info("💡 위 조합은 시간 중복 가능성을 고려하지 않은 추천 리스트입니다. (정식 버전에서 알고리즘 고도화 예정)")
+        total = major + ge
+        st.metric("현재 총 이수", f"{total} / 130")
+        st.progress(total/130)
 
-# === Tab 4: 강의 인사이트 ===
-elif menu == "강의 인사이트":
-    st.header("💡 강의 정밀 분석")
-    st.write("에브리타임 데이터와 강의계획서를 분석하여 수업의 성격을 파악합니다.")
-    
-    selected_c = st.selectbox("분석할 과목 선택", course_db['과목명'].tolist())
-    c_info = course_db[course_db['과목명'] == selected_c].iloc[0]
-    
-    col1, col2, col3 = st.columns(3)
-    col1.metric("시험 비중", f"{c_info['시험비중']}%")
-    col2.metric("과제 비중", f"{c_info['과제비중']}%")
-    col3.metric("팀플 유무", c_info['팀플'])
-    
-    st.divider()
-    st.subheader("AI 한 줄 평")
-    if c_info['시험비중'] >= 70:
-        st.write("🔥 이 과목은 **시험 한 방**이 중요합니다. 평소 이론 복습에 집중하세요.")
-    elif c_info['과제비중'] >= 40:
-        st.write("📝 **과제형 수업**입니다. 꾸준히 과제를 제출하는 성실함이 학점을 결정합니다.")
-    
-    if c_info['팀플'] == '유':
-        st.write("👥 **팀플 주의!** 소통 능력이 요구되는 수업입니다.")
+elif menu == "스마트 시간표":
+    st.header("📅 시간표 자동 생성")
+    if st.button("공강 고려 시간표 추천받기"):
+        res = course_db.sample(3)
+        st.table(res[['과목명', '교수', '시간', '영역']])
