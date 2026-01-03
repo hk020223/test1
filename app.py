@@ -2,45 +2,56 @@ import streamlit as st
 import pandas as pd
 import os
 import glob
+import datetime
 from langchain_community.document_loaders import PyPDFLoader
 from langchain_google_genai import ChatGoogleGenerativeAI
 from langchain_core.prompts import PromptTemplate
 
 # -----------------------------------------------------------------------------
-# [0] 가상의 강의평 데이터 생성 (크롤링 대용)
+# [0] 설정 및 데이터 로드
 # -----------------------------------------------------------------------------
-# 실제로는 이 데이터를 csv 파일로 관리하거나 DB에 저장해야 합니다.
+st.set_page_config(page_title="KW-강의마스터 Pro", page_icon="🎓", layout="wide")
+api_key = os.environ.get("GOOGLE_API_KEY", "")
+
+# 세션 상태 초기화 (대화 로그 및 데이터 유지용)
+if "global_log" not in st.session_state:
+    st.session_state.global_log = [] # 사이드바 표시용 로그
+if "timetable_result" not in st.session_state:
+    st.session_state.timetable_result = "" # 생성된 시간표 저장
+if "chat_history" not in st.session_state:
+    st.session_state.chat_history = [] # 학사 지식인 대화
+
+def add_log(role, content):
+    """사이드바 로그에 메시지 추가"""
+    timestamp = datetime.datetime.now().strftime("%H:%M")
+    st.session_state.global_log.append({
+        "role": role,
+        "content": content,
+        "time": timestamp
+    })
+
+# 가상 강의평 데이터
 def load_mock_reviews():
     data = {
-        "과목명": ["C프로그래밍", "C프로그래밍", "대학수학1", "공학설계입문", "대학영어"],
-        "교수명": ["김코딩", "김코딩", "이수학", "박설계", "Brown"],
+        "과목명": ["C프로그래밍", "C프로그래밍", "대학수학1", "공학설계입문", "대학영어", "회로이론1"],
+        "교수명": ["김코딩", "이자바", "이수학", "박설계", "Brown", "최전기"],
         "강의평": [
-            "교수님 설명은 좋은데 과제가 진짜 너무 많아요. 매주 밤샘.",
-            "학점은 잘 주시는 편입니다. 시험은 족보에서 많이 나옴.",
-            "수포자라면 비추. 진도 엄청 빠름. 대신 질문은 잘 받아주심.",
-            "조별과제 지옥... 팀원 잘못 만나면 한 학기 망함.",
-            "출석만 잘 하면 B+은 깔고 감. 꿀강임."
+            "과제 폭탄입니다. 살려주세요.",
+            "천사 교수님. 학점 잘 주심.",
+            "진도가 너무 빠름. 예습 필수.",
+            "팀플 빌런 만나면 한 학기 망함.",
+            "출석만 잘 하면 B+은 기본.",
+            "시험이 족보에서 그대로 나옴."
         ],
         "시험정보": [
-            "중간고사 코딩 테스트 손코딩 나옴",
-            "기말은 프로젝트로 대체",
-            "교재 연습문제 숫자만 바꿔서 나옴",
-            "발표 비중이 큼",
-            "오픈북 시험임"
+            "손코딩 시험", "실습 시험", "교재 연습문제 변형", "발표 비중 큼", "오픈북", "족보 암기 필수"
         ]
     }
     return pd.DataFrame(data)
 
 REVIEW_DB = load_mock_reviews()
 
-# -----------------------------------------------------------------------------
-# [1] 서버 설정 및 데이터 로드
-# -----------------------------------------------------------------------------
-st.set_page_config(page_title="KW-강의마스터", page_icon="🎓", layout="wide")
-api_key = os.environ.get("GOOGLE_API_KEY", "")
-
-# ... (기존 load_knowledge_base 함수 동일) ...
-@st.cache_resource(show_spinner="학교 정보를 학습하는 중입니다...")
+@st.cache_resource(show_spinner="문서 학습 중...")
 def load_knowledge_base():
     all_content = ""
     if not os.path.exists("data"):
@@ -54,176 +65,274 @@ def load_knowledge_base():
             loader = PyPDFLoader(pdf_file)
             pages = loader.load_and_split()
             filename = os.path.basename(pdf_file)
-            all_content += f"\n\n--- [문서 시작: {filename}] ---\n"
+            all_content += f"\n\n--- [문서: {filename}] ---\n"
             for page in pages:
                 all_content += page.page_content
-        except Exception as e:
-            continue
+        except: continue
     return all_content
 
 PRE_LEARNED_DATA = load_knowledge_base()
 
 # -----------------------------------------------------------------------------
-# [2] AI 엔진
+# [1] AI 엔진 (생성 및 수정 기능 포함)
 # -----------------------------------------------------------------------------
 def get_llm():
     if not api_key: return None
     return ChatGoogleGenerativeAI(model="gemini-2.5-flash-preview-09-2025", temperature=0)
 
 def ask_ai(question):
-    # ... (기존 ask_ai 함수 동일) ...
     llm = get_llm()
     if not llm: return "⚠️ API Key 오류"
     try:
-        template = """
-        [학습된 PDF 문서들] {context}
-        [질문] {question}
-        위 내용을 바탕으로 답변해줘.
-        """
-        prompt = PromptTemplate(template=template, input_variables=["context", "question"])
-        chain = prompt | llm
+        chain = PromptTemplate.from_template(
+            "문서 내용: {context}\n질문: {question}\n문서에 기반해 답변해줘."
+        ) | llm
         return chain.invoke({"context": PRE_LEARNED_DATA, "question": question}).content
     except Exception as e: return str(e)
 
-# ★★★ 강의평 분석 AI 함수 추가 ★★★
-def analyze_reviews_ai(course_name, professor_name):
-    llm = get_llm()
-    if not llm: return "⚠️ API Key 오류"
-
-    # 해당 과목/교수의 리뷰 데이터 필터링
-    relevant_reviews = REVIEW_DB[
-        (REVIEW_DB['과목명'] == course_name) & 
-        (REVIEW_DB['교수명'] == professor_name)
-    ]
-
-    if relevant_reviews.empty:
-        return None # 데이터 없음
-
-    # 리뷰 텍스트 합치기
-    reviews_text = "\n".join(relevant_reviews['강의평'].tolist())
-    exams_text = "\n".join(relevant_reviews['시험정보'].tolist())
-
-    try:
-        template = """
-        너는 수강신청 도우미 AI야. 학생들의 강의평 데이터를 요약해서 알려줘.
-
-        [강의평 데이터]
-        {reviews}
-
-        [시험 정보 데이터]
-        {exams}
-
-        [지시사항]
-        1. **한 줄 요약**: 이 강의의 전반적인 분위기를 한 문장으로 요약해.
-        2. **장점/단점**: 핵심 키워드(과제 양, 학점, 강의력 등) 위주로 정리해.
-        3. **시험 꿀팁**: 시험 스타일이나 대비 방법을 알려줘.
-        4. 어조는 대학생 선배가 조언해주듯이 친근하게 해.
-        """
-        prompt = PromptTemplate(template=template, input_variables=["reviews", "exams"])
-        chain = prompt | llm
-        
-        response = chain.invoke({"reviews": reviews_text, "exams": exams_text})
-        return response.content
-    except Exception as e:
-        return f"분석 오류: {str(e)}"
-
-def generate_timetable_ai(major, grade, semester, target_credits, free_days, requirements):
-    # ... (기존 generate_timetable_ai 함수 로직 유지) ...
-    # 다만 프롬프트에 "강의평 데이터를 참고하여 꿀강/헬강을 구분해달라"는 내용을 추가할 수 있음
+# 시간표 생성 함수
+def generate_timetable_ai(major, grade, semester, target_credits, blocked_times_desc, requirements):
     llm = get_llm()
     if not llm: return "⚠️ API Key 오류"
     
-    # 강의평 데이터를 프롬프트에 주입하기 위해 텍스트로 변환
-    review_summary_str = REVIEW_DB.to_string()
+    review_summary = REVIEW_DB.to_string()
+    
+    template = """
+    너는 '수강신청 마스터'야. PDF 문서(시간표)와 강의평을 참고해 최적의 시간표를 짜줘.
 
+    [학생 정보]
+    - {major} {grade} {semester}
+    - 목표: {target_credits}학점
+    - **공강 필수 시간(이 시간은 절대 수업 넣지마)**: {blocked_times}
+    - 추가요구: {requirements}
+
+    [강의평 데이터]
+    {review_data}
+
+    [지시사항]
+    1. 실제 PDF 내 개설 과목과 시간을 매칭해.
+    2. 결과는 **마크다운 표**로 출력해. (행: 1~9교시, 열: 월~금)
+    3. 셀 내용: "과목명<br>(교수명)"
+    4. 강의평이 안 좋은 과목이 포함되면 경고 문구(⚠️)를 띄워줘.
+
+    [학습된 문서]
+    {context}
+    """
+    prompt = PromptTemplate(template=template, input_variables=["context", "major", "grade", "semester", "target_credits", "blocked_times", "requirements", "review_data"])
+    chain = prompt | llm
+    input_data = {
+        "context": PRE_LEARNED_DATA,
+        "major": major,
+        "grade": grade,
+        "semester": semester,
+        "target_credits": target_credits,
+        "blocked_times": blocked_times_desc,
+        "requirements": requirements,
+        "review_data": review_summary
+    }
+    return chain.invoke(input_data).content
+
+# 시간표 수정(꼬리 질문) 함수
+def refine_timetable_ai(current_timetable, user_request):
+    llm = get_llm()
+    template = """
+    너는 현재 시간표를 수정해주는 조교야.
+    
+    [현재 시간표]
+    {current_timetable}
+
+    [사용자의 수정 요청]
+    "{user_request}"
+
+    [지시사항]
+    1. 사용자의 요청을 반영하여 시간표를 **재작성**해줘.
+    2. 마크다운 표 형식을 유지해.
+    3. 수정된 부분에 대해서는 짧게 코멘트를 달아줘.
+    """
+    prompt = PromptTemplate(template=template, input_variables=["current_timetable", "user_request"])
+    chain = prompt | llm
+    return chain.invoke({"current_timetable": current_timetable, "user_request": user_request}).content
+
+# -----------------------------------------------------------------------------
+# [2] UI 구성
+# -----------------------------------------------------------------------------
+
+# --- [사이드바] 대화 로그 표시 ---
+with st.sidebar:
+    st.title("🗂️ 활동 로그")
+    st.caption("AI와의 대화 내역이 여기에 저장됩니다.")
+    
+    log_container = st.container(height=400)
+    with log_container:
+        if not st.session_state.global_log:
+            st.info("아직 대화 내역이 없습니다.")
+        else:
+            for log in reversed(st.session_state.global_log):
+                with st.chat_message(log["role"]):
+                    st.write(f"**[{log['time']}]** {log['content']}")
+    
+    st.divider()
+    st.markdown("### ℹ️ 학습된 데이터")
     try:
-        template = """
-        너는 대학교 수강신청 전문가야. 
-        [학습된 PDF 문서들](시간표, 요람)과 [학생들의 강의평 데이터]를 모두 고려해서 최적의 시간표를 짜줘.
+        pdf_count = len(glob.glob("data/*.pdf"))
+        st.success(f"📚 PDF 문서 {pdf_count}개 연동됨")
+    except:
+        st.error("데이터 폴더 확인 필요")
 
-        [학생 정보]
-        - {major} / {grade} {semester} / 목표 {target_credits}학점
-        - 공강 희망: {free_days}
-        - 요구사항: {requirements}
 
-        [학생들의 리얼 강의평 데이터 (참고용)]
-        {review_data}
+# --- [메인 화면] 탭 메뉴 ---
+menu = st.radio("기능 선택", ["🤖 AI 학사 지식인", "📅 스마트 시간표(수정가능)", "🔍 강의평 분석"], horizontal=True)
+st.divider()
 
-        [지시사항]
-        1. PDF에서 필수 과목과 시간을 찾아서 시간표를 구성해.
-        2. **중요**: 강의평 데이터를 참고해서, 만약 "과제가 너무 많다"거나 "팀플 지옥"인 과목이 있다면, 시간표 추천 이유에 **경고 메시지**를 함께 적어줘. (예: "⚠️ 이 수업은 조별과제가 빡세다는 평이 있습니다.")
-        3. 결과는 **마크다운 표**로 작성하고, 그 아래에 상세 분석을 적어줘.
+# 1. AI 학사 지식인 (일반 Q&A)
+if menu == "🤖 AI 학사 지식인":
+    st.subheader("🤖 무엇이든 물어보세요")
+    
+    # 기존 대화 출력
+    for msg in st.session_state.chat_history:
+        with st.chat_message(msg["role"]):
+            st.markdown(msg["content"])
 
-        [학습된 PDF 문서들]
-        {context}
-        """
-        prompt = PromptTemplate(template=template, input_variables=["context", "major", "grade", "semester", "target_credits", "free_days", "requirements", "review_data"])
-        chain = prompt | llm
+    # 입력창
+    if user_input := st.chat_input("질문 입력 (예: 졸업 요건이 뭐야?)"):
+        # 유저 메시지 표시 및 저장
+        st.session_state.chat_history.append({"role": "user", "content": user_input})
+        add_log("user", f"[지식인] {user_input}")
+        with st.chat_message("user"):
+            st.markdown(user_input)
+
+        # AI 응답
+        with st.chat_message("assistant"):
+            with st.spinner("문서 검색 중..."):
+                response = ask_ai(user_input)
+                st.markdown(response)
         
-        input_data = {
-            "context": PRE_LEARNED_DATA,
-            "major": major,
-            "grade": grade,
-            "semester": semester,
-            "target_credits": target_credits,
-            "free_days": ", ".join(free_days) if free_days else "없음",
-            "requirements": requirements if requirements else "없음",
-            "review_data": review_summary_str
-        }
+        # AI 메시지 저장
+        st.session_state.chat_history.append({"role": "assistant", "content": response})
+        add_log("assistant", f"[지식인 답변] {response[:30]}...")
+
+# 2. 스마트 시간표 (생성 + 꼬리 질문 수정)
+elif menu == "📅 스마트 시간표(수정가능)":
+    st.subheader("📅 AI 맞춤형 시간표 설계")
+
+    col1, col2 = st.columns([1, 1.5])
+    
+    with col1:
+        st.markdown("#### 1️⃣ 기본 정보 입력")
+        major = st.text_input("학과", "전자융합공학과")
+        c1, c2 = st.columns(2)
+        grade = c1.selectbox("학년", ["1학년", "2학년", "3학년", "4학년"])
+        semester = c2.selectbox("학기", ["1학기", "2학기"])
+        target_credit = st.number_input("목표 학점", 9, 24, 18)
+        requirements = st.text_area("추가 요구사항", placeholder="예: 전공 필수 위주로, 아침 수업 싫음")
+
+    with col2:
+        st.markdown("#### 2️⃣ 공강 시간 설정 (Click)")
+        st.caption("✅ 체크된 시간은 '수업 가능', ⬜ 체크 해제한 시간은 '공강(수업 없음)'입니다.")
         
-        return chain.invoke(input_data).content
-    except Exception as e: return str(e)
+        # 시간표 Grid 생성 (기본값 True = 수업 가능)
+        schedule_data = pd.DataFrame(
+            True,
+            index=[f"{i}교시" for i in range(1, 10)],
+            columns=["월", "화", "수", "목", "금"]
+        )
+        
+        # 데이터 에디터로 공강 선택 UI 구현
+        edited_schedule = st.data_editor(
+            schedule_data,
+            column_config={
+                "월": st.column_config.CheckboxColumn("월", default=True),
+                "화": st.column_config.CheckboxColumn("화", default=True),
+                "수": st.column_config.CheckboxColumn("수", default=True),
+                "목": st.column_config.CheckboxColumn("목", default=True),
+                "금": st.column_config.CheckboxColumn("금", default=True),
+            },
+            height=360,
+            use_container_width=True
+        )
 
+    # 생성 버튼
+    if st.button("시간표 생성하기 ✨", type="primary", use_container_width=True):
+        # 공강 시간 분석 (False인 값들 찾기)
+        blocked_times = []
+        for day in ["월", "화", "수", "목", "금"]:
+            for period in edited_schedule.index:
+                if not edited_schedule.loc[period, day]: # 체크 해제된 경우
+                    blocked_times.append(f"{day}요일 {period}")
+        
+        blocked_desc = ", ".join(blocked_times) if blocked_times else "없음"
+        add_log("user", f"[시간표 생성] {major} {grade}, 공강: {blocked_desc}")
 
-# -----------------------------------------------------------------------------
-# [3] UI 구성
-# -----------------------------------------------------------------------------
-st.sidebar.title("🎓 KW-강의마스터")
-menu = st.sidebar.radio("메뉴", ["AI 학사 지식인", "스마트 시간표", "강의평 분석(Beta)"])
+        with st.spinner("시간표 조합 중..."):
+            result = generate_timetable_ai(major, grade, semester, target_credit, blocked_desc, requirements)
+            st.session_state.timetable_result = result # 결과 세션 저장
+            add_log("assistant", "[시간표 생성 완료]")
 
-if menu == "AI 학사 지식인":
-    st.header("🤖 AI 학사 지식인")
-    # ... (기존 코드 동일) ...
-    if user_input := st.chat_input("질문하세요"):
-        # ... (기존 코드 동일) ...
-        st.write(ask_ai(user_input))
+    # 결과 표시 및 수정(꼬리 질문) 영역
+    if st.session_state.timetable_result:
+        st.divider()
+        st.markdown("### 🗓️ 생성된 시간표")
+        st.markdown(st.session_state.timetable_result, unsafe_allow_html=True)
+        
+        st.info("💡 시간표가 마음에 들지 않나요? 아래 채팅창에 수정 요청을 해보세요.")
+        
+        # 수정 요청 채팅창
+        if refine_input := st.chat_input("수정 요청 (예: 화요일 1교시 수업 빼줘, C프로그래밍 교수님 바꿔줘)"):
+            add_log("user", f"[시간표 수정] {refine_input}")
+            with st.chat_message("user"):
+                st.write(refine_input)
+            
+            with st.chat_message("assistant"):
+                with st.spinner("시간표 수정 중..."):
+                    new_result = refine_timetable_ai(st.session_state.timetable_result, refine_input)
+                    st.session_state.timetable_result = new_result # 결과 덮어쓰기
+                    st.markdown(new_result, unsafe_allow_html=True)
+                    st.rerun() # 화면 갱신해서 수정된 시간표를 위로 올림
 
-elif menu == "스마트 시간표":
-    st.header("📅 AI 맞춤형 시간표")
-    # ... (기존 폼 코드 동일) ...
-    with st.form("timetable_form"):
-        col1, col2 = st.columns(2)
-        with col1:
-            major_input = st.text_input("학과", "전자융합공학과")
-            grade_input = st.selectbox("학년", ["1학년", "2학년", "3학년", "4학년"])
-            semester_input = st.selectbox("학기", ["1학기", "2학기"])
-        with col2:
-            target_credit = st.number_input("목표 학점", 9, 24, 19)
-            free_days = st.multiselect("공강 희망", ["월", "화", "수", "목", "금"])
-            requirements = st.text_input("요구사항")
-        submitted = st.form_submit_button("생성하기")
-
-    if submitted:
-        with st.spinner("분석 중..."):
-            result = generate_timetable_ai(major_input, grade_input, semester_input, target_credit, free_days, requirements)
-            st.markdown(result, unsafe_allow_html=True)
-
-elif menu == "강의평 분석(Beta)":
-    st.header("🔍 강의평 AI 분석")
-    st.info("학생들의 강의평 데이터를 AI가 분석하여 핵심만 요약해 드립니다.")
+# 3. 강의평 분석
+elif menu == "🔍 강의평 분석":
+    st.subheader("🔍 강의평 팩트체크")
     
     col1, col2 = st.columns(2)
-    with col1:
-        # DB에 있는 과목만 선택하게 함
-        c_name = st.selectbox("과목명", REVIEW_DB['과목명'].unique())
-    with col2:
-        p_name = st.selectbox("교수명", REVIEW_DB[REVIEW_DB['과목명'] == c_name]['교수명'].unique())
+    c_name = col1.selectbox("과목명", REVIEW_DB['과목명'].unique())
+    p_name = col2.selectbox("교수명", REVIEW_DB[REVIEW_DB['과목명'] == c_name]['교수명'].unique())
+    
+    # 강의평 분석용 챗 세션 키
+    if "review_chat" not in st.session_state:
+        st.session_state.review_chat = []
 
-    if st.button("분석 결과 보기"):
-        with st.spinner("리뷰 데이터를 분석하는 중..."):
-            analysis = analyze_reviews_ai(c_name, p_name)
-            if analysis:
-                st.success(f"✅ {c_name}({p_name}) 분석 결과")
-                st.markdown(analysis)
-            else:
-                st.error("해당 과목의 리뷰 데이터가 없습니다.")
+    if st.button("분석 시작"):
+        # 초기 분석 수행
+        reviews = REVIEW_DB[(REVIEW_DB['과목명']==c_name) & (REVIEW_DB['교수명']==p_name)]
+        context = reviews.to_string()
+        
+        prompt = f"과목: {c_name}, 교수: {p_name}\n데이터: {context}\n이 강의의 장단점과 시험 스타일을 요약해줘."
+        
+        with st.spinner("분석 중..."):
+            llm = get_llm()
+            res = llm.invoke(prompt).content
+            st.session_state.review_chat = [{"role": "assistant", "content": res, "context": context}]
+            add_log("user", f"[강의평] {c_name} 분석 요청")
+
+    # 대화 표시
+    for msg in st.session_state.review_chat:
+        if "role" in msg:
+            with st.chat_message(msg["role"]):
+                st.write(msg["content"])
+
+    # 강의평 관련 꼬리 질문
+    if st.session_state.review_chat:
+        if q_input := st.chat_input("더 궁금한 점이 있나요? (예: 과제 진짜 많아?)"):
+            st.session_state.review_chat.append({"role": "user", "content": q_input})
+            add_log("user", f"[강의평 질문] {q_input}")
+            with st.chat_message("user"):
+                st.write(q_input)
+            
+            with st.chat_message("assistant"):
+                # 이전 맥락(강의평 데이터)을 포함하여 질문
+                context_data = st.session_state.review_chat[0].get("context", "")
+                llm = get_llm()
+                ans = llm.invoke(f"강의평 데이터: {context_data}\n질문: {q_input}\n데이터에 기반해서 답변해.").content
+                st.write(ans)
+                st.session_state.review_chat.append({"role": "assistant", "content": ans})
+                add_log("assistant", f"[강의평 답변] {ans[:20]}...")
