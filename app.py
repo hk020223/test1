@@ -3,13 +3,12 @@ import pandas as pd
 import os
 import glob
 import datetime
-import json
 from langchain_community.document_loaders import PyPDFLoader
 from langchain_google_genai import ChatGoogleGenerativeAI
 from langchain_core.prompts import PromptTemplate
 
 # -----------------------------------------------------------------------------
-# [0] 설정 및 데이터 로드 (초고속 모드 적용)
+# [0] 설정 및 데이터 로드
 # -----------------------------------------------------------------------------
 st.set_page_config(page_title="KW-강의마스터 Pro", page_icon="🎓", layout="wide")
 api_key = os.environ.get("GOOGLE_API_KEY", "")
@@ -35,53 +34,28 @@ def add_log(role, content, menu_context=None):
         "menu": menu_context
     })
 
-# 가상 강의평 데이터
-def load_mock_reviews():
-    data = {
-        "과목명": ["C프로그래밍", "C프로그래밍", "대학수학1", "공학설계입문", "대학영어", "회로이론1", "대학물리학1"],
-        "교수명": ["김코딩", "이자바", "이수학", "박설계", "Brown", "최전기", "나물리"],
-        "강의평": [
-            "과제 폭탄입니다. 살려주세요.",
-            "천사 교수님. 학점 잘 주심.",
-            "진도가 너무 빠름. 예습 필수.",
-            "팀플 빌런 만나면 한 학기 망함.",
-            "출석만 잘 하면 B+은 기본.",
-            "시험이 족보에서 그대로 나옴.",
-            "물포자도 이해하게 설명해주심."
-        ],
-        "시험정보": [
-            "손코딩 시험", "실습 시험", "교재 연습문제 변형", "발표 비중 큼", "오픈북", "족보 암기 필수", "공식 암기 위주"
-        ]
-    }
-    return pd.DataFrame(data)
-
-REVIEW_DB = load_mock_reviews()
-
-@st.cache_resource(show_spinner=False)
+# PDF 데이터 로드 (캐시 파일 우선 사용으로 속도 향상)
+@st.cache_resource(show_spinner="학사 데이터를 분석 중입니다...")
 def load_knowledge_base():
-    """
-    [초고속 로딩] 미리 만들어둔 텍스트 파일(cached_knowledge.txt)을 우선적으로 읽습니다.
-    """
-    cache_file = "data/cached_knowledge.txt"
-    
-    # 1. 미리 학습된 파일이 있는지 확인 (가장 빠름)
-    if os.path.exists(cache_file):
-        try:
-            with open(cache_file, "r", encoding="utf-8") as f:
-                data = f.read()
-                if len(data) > 10: # 내용이 제대로 있는지 확인
-                    return data, True # True = 캐시 사용됨
-        except:
-            pass # 읽기 실패하면 아래로 넘어감
-
-    # 2. 캐시가 없으면 PDF 직접 파싱 (느림, 비상용)
+    # 1. data 폴더 확인
     if not os.path.exists("data"):
-        return "", False
-        
+        return ""
+    
+    cache_path = "data/cached_knowledge.txt"
+
+    # 2. 미리 학습된(변환된) 텍스트 파일이 있으면 그걸 읽어서 바로 반환
+    if os.path.exists(cache_path):
+        try:
+            with open(cache_path, "r", encoding="utf-8") as f:
+                return f.read()
+        except:
+            pass # 읽기 실패 시 아래 PDF 파싱으로 넘어감
+
+    # 3. 캐시가 없으면 PDF 파일들을 읽어서 분석
     all_content = ""
     pdf_files = glob.glob("data/*.pdf")
     if not pdf_files:
-        return "", False
+        return ""
         
     for pdf_file in pdf_files:
         try:
@@ -93,15 +67,16 @@ def load_knowledge_base():
                 all_content += page.page_content
         except: continue
     
-    return all_content, False # False = 실시간 파싱됨
+    # 4. 분석된 내용을 다음을 위해 파일로 저장 (미리 학습)
+    try:
+        with open(cache_path, "w", encoding="utf-8") as f:
+            f.write(all_content)
+    except:
+        pass
+    
+    return all_content
 
-# 데이터 로드 실행
-PRE_LEARNED_DATA, IS_CACHED = load_knowledge_base()
-
-# 로딩 상태 표시 (사이드바)
-if IS_CACHED:
-    # 토스트 메시지는 앱 켤 때 한 번만 쓱 지나감
-    st.toast("⚡ 미리 학습된 데이터를 사용하여 즉시 실행되었습니다!", icon="🚀")
+PRE_LEARNED_DATA = load_knowledge_base()
 
 # -----------------------------------------------------------------------------
 # [1] AI 엔진
@@ -114,18 +89,17 @@ def ask_ai(question):
     llm = get_llm()
     if not llm: return "⚠️ API Key 오류"
     try:
+        # 원문 인용 요청 추가
         chain = PromptTemplate.from_template(
-            "문서 내용: {context}\n질문: {question}\n문서에 기반해 답변해줘."
+            "문서 내용: {context}\n질문: {question}\n문서에 기반해 답변해줘. 답변할 때 근거가 되는 문서의 원문 내용을 반드시 \" \" (쌍따옴표) 안에 인용해서 포함해줘."
         ) | llm
         return chain.invoke({"context": PRE_LEARNED_DATA, "question": question}).content
     except Exception as e: return str(e)
 
-# 시간표 생성 함수 (HTML 컬러 테이블 + 선수과목 강조)
+# 시간표 생성 함수 (HTML 컬러 테이블 + 세로형 + 선수과목 강조)
 def generate_timetable_ai(major, grade, semester, target_credits, blocked_times_desc, requirements):
     llm = get_llm()
     if not llm: return "⚠️ API Key 오류"
-    
-    review_summary = REVIEW_DB.to_string()
     
     template = """
     너는 대학교 수강신청 전문가야. PDF 문서(시간표, 요람)를 분석해서 최적의 시간표를 짜줘.
@@ -136,31 +110,29 @@ def generate_timetable_ai(major, grade, semester, target_credits, blocked_times_
     - 공강 필수 시간: {blocked_times} (이 시간은 수업 배치 절대 금지)
     - 추가요구: {requirements}
 
-    [강의평 데이터]
-    {review_data}
-
     [필수 지시사항]
     1. **모든 학년의 선수/후수 과목 철저 준수**:
        - 1학년뿐만 아니라, **2, 3, 4학년의 전공 연계성**을 반드시 확인해라.
-       - 예시: "회로이론1(1학기) → 회로이론2(2학기)", "전자장1 → 전자장2", "종합설계(캡스톤) 이수 조건" 등.
+       - 예시: "회로이론1(1학기) → 회로이론2(2학기)", "전자장1 → 전자장2" 등.
        - 해당 학기({semester})에 들어야 다음 학기나 다음 학년에 문제가 없는 **'필수 선수 과목'**은 무조건 시간표에 넣어라.
        - 결과 설명에 "**[필수] 이 과목은 다음 단계인 OO과목 수강을 위해 꼭 들어야 합니다.**"라고 이유를 명시해라.
     
-    2. **출력 형식 (HTML Table)**:
-       - 마크다운 표 대신 **HTML `<table>` 태그**를 사용해라.
-       - 각 수업마다 **서로 다른 파스텔톤 배경색**(`style="background-color: #..."`)을 적용해라.
+    2. **출력 형식 (세로형 HTML Table)**:
+       - 반드시 **HTML `<table>` 태그**를 사용해라.
+       - **행(Row): 1교시 ~ 9교시 (세로축이 시간)**
+       - **열(Column): 월, 화, 수, 목, 금**
+       - 각 수업 셀마다 **서로 다른 파스텔톤 배경색**(`style="background-color: #..."`)을 적용해라.
        - 셀 내용: `<b>과목명</b><br><small>교수명</small>`
-       - 행: 1교시~9교시 (시간 미포함), 열: 월~금
-       - 표는 시각적으로 예쁘고 깔끔하게 만들어라.
+       - 빈 시간(공강)은 비워둬라.
+       - 표는 시각적으로 깔끔하게 만들어라.
     
     3. **공강 시간 처리**:
        - 공강으로 지정된 시간은 비워둬라.
-       - 출력 시 "공강 필수 시간" 목록을 텍스트로 보여주지 마라. (결과물만 깔끔하게)
 
     [학습된 문서]
     {context}
     """
-    prompt = PromptTemplate(template=template, input_variables=["context", "major", "grade", "semester", "target_credits", "blocked_times", "requirements", "review_data"])
+    prompt = PromptTemplate(template=template, input_variables=["context", "major", "grade", "semester", "target_credits", "blocked_times", "requirements"])
     chain = prompt | llm
     input_data = {
         "context": PRE_LEARNED_DATA,
@@ -169,8 +141,7 @@ def generate_timetable_ai(major, grade, semester, target_credits, blocked_times_
         "semester": semester,
         "target_credits": target_credits,
         "blocked_times": blocked_times_desc,
-        "requirements": requirements,
-        "review_data": review_summary
+        "requirements": requirements
     }
     return chain.invoke(input_data).content
 
@@ -189,12 +160,13 @@ def chat_with_timetable_ai(current_timetable, user_input):
     사용자의 입력 의도를 파악해서 아래 두 가지 중 하나로 반응해.
     
     **Case 1. 시간표 수정 요청인 경우 (예: "1교시 빼줘", "교수 바꿔줘"):**
-    - 시간표를 **재작성(HTML Table 형식 유지)**해줘.
+    - 시간표를 **재작성(HTML Table 형식 유지 - 세로형)**해줘.
     - 수정된 시간표를 출력하고, 무엇이 바뀌었는지 짧게 설명해.
     
-    **Case 2. 과목에 대한 단순 질문인 경우 (예: "C프로그래밍 과제 많아?", "이거 선수과목 뭐야?"):**
+    **Case 2. 과목에 대한 단순 질문인 경우 (예: "이거 선수과목 뭐야?"):**
     - **시간표를 다시 출력하지 말고**, 질문에 대한 **텍스트 답변**만 해.
-    - 강의평 데이터나 학습된 지식을 활용해.
+    - 학습된 지식을 활용해.
+    - **답변할 때 근거가 되는 문서의 원문 내용을 반드시 " " (쌍따옴표) 안에 인용해서 포함해줘.**
     
     답변 시작에 [수정] 또는 [답변] 태그를 붙여서 구분해줘.
     """
@@ -225,18 +197,13 @@ with st.sidebar:
                         st.rerun()
 
     st.divider()
-    st.markdown("### ℹ️ 상태")
-    if IS_CACHED:
-        st.success("🚀 고속 모드 (Pre-learned)")
-    elif PRE_LEARNED_DATA:
-        st.warning("🐢 일반 모드 (PDF 실시간 분석)")
-    else:
-        st.error("데이터 없음")
+    # 학습 상태 표시는 최소화 (데이터 로드 여부만 조용히 체크)
+    if not PRE_LEARNED_DATA:
+        st.error("⚠️ 데이터 폴더에 PDF 파일이 없습니다.")
 
-
-menu = st.radio("기능 선택", ["🤖 AI 학사 지식인", "📅 스마트 시간표(수정가능)", "🔍 강의평 분석"], 
+menu = st.radio("기능 선택", ["🤖 AI 학사 지식인", "📅 스마트 시간표(수정가능)"], 
                 horizontal=True, key="menu_radio", 
-                index=["🤖 AI 학사 지식인", "📅 스마트 시간표(수정가능)", "🔍 강의평 분석"].index(st.session_state.current_menu))
+                index=["🤖 AI 학사 지식인", "📅 스마트 시간표(수정가능)"].index(st.session_state.current_menu))
 
 if menu != st.session_state.current_menu:
     st.session_state.current_menu = menu
@@ -273,7 +240,14 @@ elif st.session_state.current_menu == "📅 스마트 시간표(수정가능)":
         col1, col2 = st.columns([1, 1.5])
         with col1:
             st.markdown("#### 1️⃣ 기본 정보")
-            major = st.text_input("학과", "전자융합공학과")
+            # 광운대학교 주요 학과 리스트 (필요 시 수정 가능)
+            kw_departments = [
+                "전자융합공학과", "전자공학과", "전자통신공학과", "전기공학과", 
+                "전자재료공학과", "로봇학부", "컴퓨터정보공학부", "소프트웨어학부", 
+                "정보융합학부", "건축학과", "건축공학과", "화학공학과", "환경공학과"
+            ]
+            major = st.selectbox("학과", kw_departments)
+            
             c1, c2 = st.columns(2)
             grade = c1.selectbox("학년", ["1학년", "2학년", "3학년", "4학년"])
             semester = c2.selectbox("학기", ["1학기", "2학기"])
@@ -341,39 +315,3 @@ elif st.session_state.current_menu == "📅 스마트 시간표(수정가능)":
                         clean_response = response.replace("[답변]", "").strip()
                         st.markdown(clean_response)
                         st.session_state.timetable_chat_history.append({"role": "assistant", "content": clean_response})
-
-elif st.session_state.current_menu == "🔍 강의평 분석":
-    st.subheader("🔍 강의평 팩트체크")
-    col1, col2 = st.columns(2)
-    c_name = col1.selectbox("과목명", REVIEW_DB['과목명'].unique())
-    p_name = col2.selectbox("교수명", REVIEW_DB[REVIEW_DB['과목명'] == c_name]['교수명'].unique())
-    
-    if "review_chat" not in st.session_state:
-        st.session_state.review_chat = []
-
-    if st.button("분석 시작"):
-        reviews = REVIEW_DB[(REVIEW_DB['과목명']==c_name) & (REVIEW_DB['교수명']==p_name)]
-        context = reviews.to_string()
-        prompt = f"과목: {c_name}, 교수: {p_name}\n데이터: {context}\n이 강의의 장단점과 시험 스타일을 요약해줘."
-        with st.spinner("분석 중..."):
-            llm = get_llm()
-            res = llm.invoke(prompt).content
-            st.session_state.review_chat = [{"role": "assistant", "content": res, "context": context}]
-            add_log("user", f"[강의평] {c_name}", "🔍 강의평 분석")
-
-    for msg in st.session_state.review_chat:
-        if "role" in msg:
-            with st.chat_message(msg["role"]):
-                st.write(msg["content"])
-
-    if st.session_state.review_chat:
-        if q_input := st.chat_input("질문 입력"):
-            st.session_state.review_chat.append({"role": "user", "content": q_input})
-            with st.chat_message("user"):
-                st.write(q_input)
-            with st.chat_message("assistant"):
-                context_data = st.session_state.review_chat[0].get("context", "")
-                llm = get_llm()
-                ans = llm.invoke(f"데이터: {context_data}\n질문: {q_input}\n답변해.").content
-                st.write(ans)
-                st.session_state.review_chat.append({"role": "assistant", "content": ans})
