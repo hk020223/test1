@@ -192,7 +192,7 @@ def generate_timetable_ai(major, grade, semester, target_credits, blocked_times_
             return "⚠️ **사용량 초과**: 잠시 후 다시 시도해주세요."
         return f"❌ AI 오류: {str(e)}"
 
-# [수정됨] 상담 함수: 필요한 변수들을 명확히 전달하도록 수정
+# [수정됨] 상담 함수: 데이터를 전달하는 방식을 확실하게 수정
 def chat_with_timetable_ai(current_timetable, user_input, major, grade, semester):
     llm = get_llm()
     def _execute():
@@ -226,11 +226,11 @@ def chat_with_timetable_ai(current_timetable, user_input, major, grade, semester
         [학습된 문서]
         {context}
         """
-        # input_variables에 COMMON_TIMETABLE_INSTRUCTION 내부의 변수(major, grade, semester)도 포함됨
+        # input_variables에 모든 변수를 명시
         prompt = PromptTemplate(template=template, input_variables=["current_timetable", "user_input", "major", "grade", "semester", "context"])
         chain = prompt | llm
         
-        # [핵심] invoke 호출 시 빠진 변수가 없도록 모두 전달
+        # [핵심] invoke에 모든 변수가 빠짐없이 들어가야 함
         return chain.invoke({
             "current_timetable": current_timetable, 
             "user_input": user_input,
@@ -384,7 +384,7 @@ elif st.session_state.current_menu == "📅 스마트 시간표(수정가능)":
                 st.write(chat_input)
             with st.chat_message("assistant"):
                 with st.spinner("분석 중..."):
-                    # [수정됨] 필요한 변수들 전달 확인
+                    # [수정됨] 필요한 변수들(major, grade, semester) 전달
                     response = chat_with_timetable_ai(st.session_state.timetable_result, chat_input, major, grade, semester)
                     if "[수정]" in response:
                         new_timetable = response.replace("[수정]", "").strip()
