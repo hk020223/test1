@@ -14,7 +14,7 @@ from langchain_google_genai import ChatGoogleGenerativeAI
 from langchain_core.prompts import PromptTemplate
 from langchain_core.messages import HumanMessage
 
-# [추가됨] Firebase 라이브러리
+# Firebase 라이브러리
 import firebase_admin
 from firebase_admin import credentials, firestore
 
@@ -48,7 +48,6 @@ if "graduation_analysis_result" not in st.session_state:
     st.session_state.graduation_analysis_result = ""
 if "graduation_chat_history" not in st.session_state:
     st.session_state.graduation_chat_history = []
-# [추가됨] 로그인 세션
 if "user" not in st.session_state:
     st.session_state.user = None
 
@@ -88,7 +87,7 @@ def run_with_retry(func, *args, **kwargs):
             raise e
 
 # -----------------------------------------------------------------------------
-# [New] Firebase Manager (로그인 및 저장 기능 담당)
+# [Firebase Manager] 로그인 및 저장 기능
 # -----------------------------------------------------------------------------
 class FirebaseManager:
     def __init__(self):
@@ -98,7 +97,6 @@ class FirebaseManager:
 
     def init_firestore(self):
         """Firestore DB 초기화"""
-        # secrets에 설정이 없으면 기능 비활성화 (에러 방지)
         if "firebase_service_account" in st.secrets:
             try:
                 if not firebase_admin._apps:
@@ -115,14 +113,24 @@ class FirebaseManager:
         if "FIREBASE_WEB_API_KEY" not in st.secrets:
             return None, "API Key 설정이 필요합니다."
         
-        api_key = st.secrets["FIREBASE_WEB_API_KEY"]
+        # 공백 제거하여 키 읽기
+        api_key = st.secrets["FIREBASE_WEB_API_KEY"].strip()
         endpoint = "signInWithPassword" if mode == "login" else "signUp"
-        # [수정 완료] 마크다운 문법 제거하고 순수 URL 문자열로 수정
-        url = f"https://identitytoolkit.googleapis.com/v1/accounts(https://identitytoolkit.googleapis.com/v1/accounts):{endpoint}?key={api_key}"
+        
+        # [수정됨] URL 형식 오류 수정 (중복된 주소 제거)
+        url = f"[https://identitytoolkit.googleapis.com/v1/accounts](https://identitytoolkit.googleapis.com/v1/accounts):{endpoint}?key={api_key}"
         
         payload = {"email": email, "password": password, "returnSecureToken": True}
         try:
             res = requests.post(url, json=payload)
+            # 응답 상태 코드가 200(성공)이 아닐 경우 예외 처리
+            if res.status_code != 200:
+                try:
+                    error_data = res.json()
+                    return None, error_data.get("error", {}).get("message", f"오류 코드: {res.status_code}")
+                except:
+                    return None, f"서버 오류 ({res.status_code})"
+                    
             data = res.json()
             if "error" in data:
                 return None, data["error"]["message"]
@@ -187,7 +195,7 @@ def get_llm():
     if not api_key: return None
     return ChatGoogleGenerativeAI(model="gemini-2.5-flash-preview-09-2025", temperature=0)
 
-# 이미지 분석용 모델 (멀티모달 지원 모델 사용)
+# 이미지 분석용 모델
 def get_pro_llm():
     if not api_key: return None
     return ChatGoogleGenerativeAI(model="gemini-2.5-flash-preview-09-2025", temperature=0)
@@ -537,6 +545,23 @@ st.divider()
 
 if st.session_state.current_menu == "🤖 AI 학사 지식인":
     st.subheader("🤖 무엇이든 물어보세요")
+    # 대화 내용 저장/불러오기
+    if st.session_state.user and fb_manager.is_initialized:
+        with st.expander("💾 대화 내용 관리"):
+            col_s1, col_s2 = st.columns(2)
+            if col_s1.button("현재 대화 저장"):
+                doc_id = str(int(time.time()))
+                data = {"history": [msg for msg in st.session_state.chat_history]}
+                if fb_manager.save_data('chat_history', doc_id, data):
+                    st.toast("대화 내용이 저장되었습니다.")
+            
+            saved_chats = fb_manager.load_collection('chat_history')
+            if saved_chats:
+                selected_chat = col_s2.selectbox("불러오기", saved_chats, format_func=lambda x: datetime.datetime.fromtimestamp(int(x['id'])).strftime('%Y-%m-%d %H:%M'), label_visibility="collapsed")
+                if col_s2.button("로드"):
+                    st.session_state.chat_history = selected_chat['history']
+                    st.rerun()
+
     for msg in st.session_state.chat_history:
         with st.chat_message(msg["role"]):
             st.markdown(msg["content"])
@@ -561,7 +586,7 @@ elif st.session_state.current_menu == "📅 스마트 시간표(수정가능)":
             if saved_tables:
                 selected_table = st.selectbox("불러올 시간표 선택", 
                                             options=saved_tables, 
-                                            format_func=lambda x: f"{x['major']} {x['grade']} ({x['created_at'].strftime('%Y-%m-%d %H:%M')})")
+                                            format_func=lambda x: f"{x['major']} {x['grade']} ({datetime.datetime.fromtimestamp(int(x['id'])).strftime('%Y-%m-%d %H:%M')})")
                 if st.button("불러오기"):
                     st.session_state.timetable_result = selected_table['result']
                     st.success("시간표를 불러왔습니다!")
@@ -696,7 +721,7 @@ elif st.session_state.current_menu == "🎓 졸업 요건 진단":
             if saved_diags:
                 selected_diag = st.selectbox("불러올 진단 선택", 
                                            saved_diags, 
-                                           format_func=lambda x: x['created_at'].strftime('%Y-%m-%d %H:%M'))
+                                           format_func=lambda x: datetime.datetime.fromtimestamp(int(x['id'])).strftime('%Y-%m-%d %H:%M'))
                 if st.button("진단 결과 불러오기"):
                     st.session_state.graduation_analysis_result = selected_diag['result']
                     st.success("진단 결과를 불러왔습니다!")
