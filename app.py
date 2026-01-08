@@ -23,6 +23,67 @@ from firebase_admin import credentials, firestore
 # -----------------------------------------------------------------------------
 st.set_page_config(page_title="KW-강의마스터 Pro", page_icon="🎓", layout="wide")
 
+# [모바일 최적화 CSS - 컴팩트 버전]
+st.markdown("""
+    <style>
+        /* 모바일 화면 (너비 600px 이하) 최적화 */
+        @media only screen and (max-width: 600px) {
+            /* 1. 화면 꽉 채우기 (여백 최소화) */
+            .main .block-container {
+                padding-left: 0.2rem !important;
+                padding-right: 0.2rem !important;
+                padding-top: 1rem !important;
+                max-width: 100% !important;
+            }
+            
+            /* 2. 시간표 한눈에 보기 (스크롤 제거 & 컴팩트 스타일) */
+            div[data-testid="stMarkdownContainer"] table {
+                width: 100% !important;
+                table-layout: fixed !important; /* 칸 너비 고정 */
+                display: table !important; /* 블록 대신 테이블 속성 유지 */
+                font-size: 10px !important; /* 글자 크기 대폭 축소 */
+                margin-bottom: 0px !important;
+            }
+            
+            /* 표의 헤더(th)와 셀(td) 스타일 */
+            div[data-testid="stMarkdownContainer"] th, 
+            div[data-testid="stMarkdownContainer"] td {
+                padding: 1px 1px !important; /* 셀 안쪽 여백 극소화 */
+                word-wrap: break-word !important; /* 줄바꿈 허용 */
+                word-break: break-all !important; /* 긴 단어 강제 줄바꿈 */
+                white-space: normal !important; /* 줄바꿈 허용 */
+                line-height: 1.1 !important; /* 줄 간격 좁게 */
+                vertical-align: middle !important; /* 세로 중앙 정렬 */
+            }
+
+            /* 교시 열(첫번째 열)은 더 좁고 작게 */
+            div[data-testid="stMarkdownContainer"] th:first-child,
+            div[data-testid="stMarkdownContainer"] td:first-child {
+                width: 35px !important; /* 교시 열 너비 고정 */
+                font-size: 8px !important; /* 교시 글자는 더 작게 */
+                text-align: center !important;
+                letter-spacing: -0.5px !important;
+            }
+            
+            /* 3. 헤더/푸터 숨김 (Native App Look) */
+            header[data-testid="stHeader"] {
+                display: none;
+            }
+            footer {
+                display: none;
+            }
+            
+            /* 4. 입력창/버튼 터치 영역 확대 */
+            button {
+                min-height: 45px !important;
+            }
+            input {
+                font-size: 16px !important; /* iOS 확대 방지 */
+            }
+        }
+    </style>
+""", unsafe_allow_html=True)
+
 # API Key 로드
 if "GOOGLE_API_KEY" in st.secrets:
     api_key = st.secrets["GOOGLE_API_KEY"]
@@ -113,24 +174,13 @@ class FirebaseManager:
         if "FIREBASE_WEB_API_KEY" not in st.secrets:
             return None, "API Key 설정이 필요합니다."
         
-        # 공백 제거하여 키 읽기
         api_key = st.secrets["FIREBASE_WEB_API_KEY"].strip()
         endpoint = "signInWithPassword" if mode == "login" else "signUp"
-        
-        # [수정됨] URL 형식 오류 수정 (중복된 주소 제거)
-        url = f"https://identitytoolkit.googleapis.com/v1/accounts:{endpoint}?key={api_key}"
+        url = f"[https://identitytoolkit.googleapis.com/v1/accounts](https://identitytoolkit.googleapis.com/v1/accounts):{endpoint}?key={api_key}"
         
         payload = {"email": email, "password": password, "returnSecureToken": True}
         try:
             res = requests.post(url, json=payload)
-            # 응답 상태 코드가 200(성공)이 아닐 경우 예외 처리
-            if res.status_code != 200:
-                try:
-                    error_data = res.json()
-                    return None, error_data.get("error", {}).get("message", f"오류 코드: {res.status_code}")
-                except:
-                    return None, f"서버 오류 ({res.status_code})"
-                    
             data = res.json()
             if "error" in data:
                 return None, data["error"]["message"]
@@ -586,7 +636,7 @@ elif st.session_state.current_menu == "📅 스마트 시간표(수정가능)":
             if saved_tables:
                 selected_table = st.selectbox("불러올 시간표 선택", 
                                             options=saved_tables, 
-                                            format_func=lambda x: f"{x['major']} {x['grade']} ({datetime.datetime.fromtimestamp(int(x['id'])).strftime('%Y-%m-%d %H:%M')})")
+                                            format_func=lambda x: f"{x['major']} {x['grade']} ({x['created_at'].strftime('%Y-%m-%d %H:%M')})")
                 if st.button("불러오기"):
                     st.session_state.timetable_result = selected_table['result']
                     st.success("시간표를 불러왔습니다!")
@@ -788,4 +838,3 @@ elif st.session_state.current_menu == "🎓 졸업 요건 진단":
             st.session_state.graduation_analysis_result = ""
             st.session_state.graduation_chat_history = []
             st.rerun()
-
