@@ -23,20 +23,25 @@ from firebase_admin import credentials, firestore
 # -----------------------------------------------------------------------------
 st.set_page_config(page_title="KW-강의마스터 Pro", page_icon="🎓", layout="wide")
 
-# [모바일 최적화 CSS - 컴팩트 버전]
+# [모바일 최적화 CSS - 컴팩트 버전 & 메뉴 버튼 복구]
 st.markdown("""
     <style>
-        /* 모바일 화면 (너비 600px 이하) 최적화 */
+        /* 1. 푸터(Made with Streamlit) 숨김 - 모든 화면 공통 */
+        footer {
+            visibility: hidden;
+        }
+        
+        /* 2. 모바일 화면 (너비 600px 이하) 최적화 */
         @media only screen and (max-width: 600px) {
-            /* 1. 화면 꽉 채우기 (여백 최소화) */
+            /* 화면 꽉 채우기 (여백 최소화) */
             .main .block-container {
                 padding-left: 0.2rem !important;
                 padding-right: 0.2rem !important;
-                padding-top: 1rem !important;
+                padding-top: 2rem !important;
                 max-width: 100% !important;
             }
             
-            /* 2. 시간표 한눈에 보기 (스크롤 제거 & 컴팩트 스타일) */
+            /* 시간표 한눈에 보기 (스크롤 제거 & 컴팩트 스타일) */
             div[data-testid="stMarkdownContainer"] table {
                 width: 100% !important;
                 table-layout: fixed !important; /* 칸 너비 고정 */
@@ -65,15 +70,10 @@ st.markdown("""
                 letter-spacing: -0.5px !important;
             }
             
-            /* 3. 헤더/푸터 숨김 (Native App Look) */
-            header[data-testid="stHeader"] {
-                display: none;
-            }
-            footer {
-                display: none;
-            }
+            /* [수정됨] 헤더 숨김 코드 삭제 -> 사이드바 메뉴 버튼 보이게 함 */
+            /* header[data-testid="stHeader"] { display: none; } */
             
-            /* 4. 입력창/버튼 터치 영역 확대 */
+            /* 입력창/버튼 터치 영역 확대 */
             button {
                 min-height: 45px !important;
             }
@@ -763,19 +763,6 @@ elif st.session_state.current_menu == "🎓 졸업 요건 진단":
     - KLAS 또는 학교 포털의 성적/학점 조회 화면을 캡처해주세요.
     - 전체 내역이 보이도록 여러 장으로 나누어 업로드해도 괜찮습니다.
     """)
-
-    # [추가됨] 진단 결과 저장/불러오기
-    if st.session_state.user and fb_manager.is_initialized:
-        with st.expander("📂 저장된 진단 결과 불러오기"):
-            saved_diags = fb_manager.load_collection('graduation_diagnosis')
-            if saved_diags:
-                selected_diag = st.selectbox("불러올 진단 선택", 
-                                           saved_diags, 
-                                           format_func=lambda x: datetime.datetime.fromtimestamp(int(x['id'])).strftime('%Y-%m-%d %H:%M'))
-                if st.button("진단 결과 불러오기"):
-                    st.session_state.graduation_analysis_result = selected_diag['result']
-                    st.success("진단 결과를 불러왔습니다!")
-                    st.rerun()
 
     uploaded_files = st.file_uploader("캡처 이미지 업로드 (여러 장 가능)", type=["png", "jpg", "jpeg"], accept_multiple_files=True)
 
