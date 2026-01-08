@@ -40,6 +40,8 @@ if "timetable_chat_history" not in st.session_state:
     st.session_state.timetable_chat_history = []
 if "graduation_analysis_result" not in st.session_state:
     st.session_state.graduation_analysis_result = ""
+if "graduation_chat_history" not in st.session_state:
+    st.session_state.graduation_chat_history = []
 
 def add_log(role, content, menu_context=None):
     timestamp = datetime.datetime.now().strftime("%H:%M")
@@ -110,7 +112,6 @@ def get_llm():
 # 이미지 분석용 모델 (멀티모달 지원 모델 사용)
 def get_pro_llm():
     if not api_key: return None
-    # 2.5 Flash 모델은 이미지 인식(멀티모달)을 지원합니다.
     return ChatGoogleGenerativeAI(model="gemini-2.5-flash-preview-09-2025", temperature=0)
 
 def ask_ai(question):
@@ -271,22 +272,18 @@ def chat_with_timetable_ai(current_timetable, user_input, major, grade, semester
             return "⚠️ **사용량 초과**: 잠시 후 다시 시도해주세요."
         return f"❌ AI 오류: {str(e)}"
 
-# 졸업 요건 분석 함수 (이미지 Base64 변환 추가)
+# 졸업 요건 분석 함수
 def analyze_graduation_requirements(uploaded_images):
     llm = get_pro_llm()
     if not llm: return "⚠️ API Key 오류"
 
-    # [수정] 이미지를 Base64 문자열로 변환하는 함수
     def encode_image(image_file):
-        # 파일 포인터 위치 초기화
         image_file.seek(0)
         return base64.b64encode(image_file.read()).decode("utf-8")
 
     image_messages = []
     for img_file in uploaded_images:
-        # Streamlit의 UploadedFile을 Base64로 변환
         base64_image = encode_image(img_file)
-        # LangChain에 전달할 올바른 포맷 (data URL 형식)
         image_messages.append({
             "type": "image_url",
             "image_url": {"url": f"data:image/jpeg;base64,{base64_image}"}
@@ -337,7 +334,6 @@ def analyze_graduation_requirements(uploaded_images):
         - 분석에 참고한 [학습된 학사 문서]의 관련 내용을 인용해주세요.
         """
         
-        # 메시지 구성: 텍스트 프롬프트 + 이미지들 + 참고 문서
         content_list = [{"type": "text", "text": prompt}]
         content_list.extend(image_messages)
         content_list.append({"type": "text", "text": f"\n\n[학습된 학사 문서]\n{PRE_LEARNED_DATA}"})
@@ -353,6 +349,50 @@ def analyze_graduation_requirements(uploaded_images):
          if "RESOURCE_EXHAUSTED" in str(e):
             return "⚠️ **사용량 초과**: 잠시 후 다시 시도해주세요."
          return f"❌ AI 오류: {str(e)}"
+
+# 졸업 요건 상담 및 수정 함수
+def chat_with_graduation_ai(current_analysis, user_input):
+    llm = get_llm()
+    def _execute():
+        template = """
+        당신은 광운대학교 학사 전문 AI 상담사입니다.
+        현재 학생의 졸업 요건 진단 결과는 다음과 같습니다:
+        
+        [현재 진단 결과]
+        {current_analysis}
+
+        [사용자 입력]
+        "{user_input}"
+
+        [지시사항]
+        사용자의 입력 의도를 파악해서 적절히 응답하세요.
+        
+        **Case 1. 단순 질문인 경우 (예: "MSC 필수가 뭐야?"):**
+        - 진단 결과나 학사 규정에 대해 설명해주세요.
+        - 친절하게 답변하세요.
+        
+        **Case 2. 정보 수정/추가인 경우 (예: "나 캡스톤디자인 2023년에 들었어", "공학인증 포기했어"):**
+        - 사용자의 정보를 반영하여 **진단 결과를 재작성**하세요.
+        - 수정된 진단 리포트를 출력할 때는 반드시 맨 앞에 `[수정]` 태그를 붙이세요.
+        - 기존 리포트 형식을 유지하면서 내용을 업데이트하세요.
+        
+        [참고 문헌 (학칙 등)]
+        {context}
+        """
+        prompt = PromptTemplate(template=template, input_variables=["current_analysis", "user_input", "context"])
+        chain = prompt | llm
+        return chain.invoke({
+            "current_analysis": current_analysis,
+            "user_input": user_input,
+            "context": PRE_LEARNED_DATA
+        }).content
+
+    try:
+        return run_with_retry(_execute)
+    except Exception as e:
+        if "RESOURCE_EXHAUSTED" in str(e):
+            return "⚠️ **사용량 초과**: 잠시 후 다시 시도해주세요."
+        return f"❌ AI 오류: {str(e)}"
 
 # -----------------------------------------------------------------------------
 # [2] UI 구성
@@ -380,7 +420,6 @@ with st.sidebar:
     else:
         st.error("⚠️ 데이터 폴더에 PDF 파일이 없습니다.")
 
-# 메뉴 선택에 졸업 요건 진단 추가
 menu = st.radio("기능 선택", ["🤖 AI 학사 지식인", "📅 스마트 시간표(수정가능)", "🎓 졸업 요건 진단"], 
                 horizontal=True, key="menu_radio", 
                 index=["🤖 AI 학사 지식인", "📅 스마트 시간표(수정가능)", "🎓 졸업 요건 진단"].index(st.session_state.current_menu))
@@ -503,7 +542,6 @@ elif st.session_state.current_menu == "📅 스마트 시간표(수정가능)":
                         st.markdown(clean_response)
                         st.session_state.timetable_chat_history.append({"role": "assistant", "content": clean_response})
 
-# 졸업 요건 진단 메뉴 구현
 elif st.session_state.current_menu == "🎓 졸업 요건 진단":
     st.subheader("🎓 졸업 요건 자가 진단")
     st.markdown("""
@@ -519,12 +557,45 @@ elif st.session_state.current_menu == "🎓 졸업 요건 진단":
             with st.spinner("이미지를 분석하고 학사 데이터와 대조 중입니다... (시간이 조금 걸릴 수 있습니다)"):
                 analysis_result = analyze_graduation_requirements(uploaded_files)
                 st.session_state.graduation_analysis_result = analysis_result
+                st.session_state.graduation_chat_history = [] # 새 분석 시 채팅 초기화
                 add_log("user", "[졸업 요건] 이미지 분석 요청", "🎓 졸업 요건 진단")
                 st.rerun()
 
     if st.session_state.graduation_analysis_result:
         st.divider()
+        st.markdown("### 📊 분석 결과")
         st.markdown(st.session_state.graduation_analysis_result)
+        
+        st.divider()
+        st.subheader("💬 결과 상담 및 수정")
+        st.caption("분석 결과에 대해 궁금한 점을 묻거나, 누락된 정보를 알려주세요. (예: '영어 교양 들었는데 빠졌어', '졸업작품 면제야')")
+
+        for msg in st.session_state.graduation_chat_history:
+            with st.chat_message(msg["role"]):
+                st.markdown(msg["content"])
+
+        if chat_input := st.chat_input("질문이나 추가 정보를 입력하세요"):
+            st.session_state.graduation_chat_history.append({"role": "user", "content": chat_input})
+            add_log("user", f"[졸업상담] {chat_input}", "🎓 졸업 요건 진단")
+            with st.chat_message("user"):
+                st.write(chat_input)
+            
+            with st.chat_message("assistant"):
+                with st.spinner("분석 중..."):
+                    response = chat_with_graduation_ai(st.session_state.graduation_analysis_result, chat_input)
+                    
+                    if "[수정]" in response:
+                        new_result = response.replace("[수정]", "").strip()
+                        st.session_state.graduation_analysis_result = new_result
+                        st.markdown(new_result)
+                        success_msg = "정보를 반영하여 진단 결과를 업데이트했습니다. 위쪽 리포트를 확인해주세요."
+                        st.session_state.graduation_chat_history.append({"role": "assistant", "content": success_msg})
+                        st.rerun()
+                    else:
+                        st.markdown(response)
+                        st.session_state.graduation_chat_history.append({"role": "assistant", "content": response})
+
         if st.button("결과 초기화"):
             st.session_state.graduation_analysis_result = ""
+            st.session_state.graduation_chat_history = []
             st.rerun()
