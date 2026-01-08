@@ -176,7 +176,7 @@ class FirebaseManager:
         
         api_key = st.secrets["FIREBASE_WEB_API_KEY"].strip()
         endpoint = "signInWithPassword" if mode == "login" else "signUp"
-        url = f"[https://identitytoolkit.googleapis.com/v1/accounts](https://identitytoolkit.googleapis.com/v1/accounts):{endpoint}?key={api_key}"
+        url = f"https://identitytoolkit.googleapis.com/v1/accounts:{endpoint}?key={api_key}"
         
         payload = {"email": email, "password": password, "returnSecureToken": True}
         try:
@@ -825,3 +825,4 @@ elif st.session_state.current_menu == "🎓 졸업 요건 진단":
             st.session_state.graduation_analysis_result = ""
             st.session_state.graduation_chat_history = []
             st.rerun()
+
