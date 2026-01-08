@@ -825,4 +825,3 @@ elif st.session_state.current_menu == "🎓 졸업 요건 진단":
             st.session_state.graduation_analysis_result = ""
             st.session_state.graduation_chat_history = []
             st.rerun()
-
