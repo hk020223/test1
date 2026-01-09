@@ -78,6 +78,10 @@ if "chat_history" not in st.session_state:
     st.session_state.chat_history = [] 
 if "current_menu" not in st.session_state:
     st.session_state.current_menu = "🤖 AI 학사 지식인"
+# [수정] 라디오 버튼 위젯 상태 초기화 (경고 메시지 방지용)
+if "menu_radio" not in st.session_state:
+    st.session_state["menu_radio"] = "🤖 AI 학사 지식인"
+
 if "timetable_chat_history" not in st.session_state:
     st.session_state.timetable_chat_history = []
 if "graduation_analysis_result" not in st.session_state:
@@ -516,9 +520,10 @@ with st.sidebar:
                                 st.error(f"오류: {err}")
     else:
         st.info(f"👤 **{st.session_state.user['email']}**님")
-        # [수정] 로그아웃 시 세션 클리어 (화면 초기화)
+        # [수정] 로그아웃 시 세션 클리어 후 라디오 버튼 키 값 초기화
         if st.button("로그아웃"):
             st.session_state.clear()
+            st.session_state["menu_radio"] = "🤖 AI 학사 지식인" # 강제 초기화
             st.rerun()
             
     st.divider()
@@ -530,7 +535,7 @@ with st.sidebar:
         else:
             for i, log in enumerate(reversed(st.session_state.global_log)):
                 label = f"[{log['time']}] {log['content'][:15]}..."
-                # [수정] 로그 클릭 시 라디오 버튼 상태(menu_radio) 강제 동기화
+                # [수정] 로그 클릭 시 라디오 버튼 위젯 상태(menu_radio) 동기화
                 if st.button(label, key=f"log_btn_{i}", use_container_width=True):
                     if log['menu']:
                         st.session_state.current_menu = log['menu']
@@ -542,10 +547,9 @@ with st.sidebar:
     else:
         st.error("⚠️ 데이터 폴더에 PDF 파일이 없습니다.")
 
-# 메뉴 구성
+# 메뉴 구성 [수정: index 파라미터 삭제, 상태는 key로만 관리]
 menu = st.radio("기능 선택", ["🤖 AI 학사 지식인", "📅 스마트 시간표(수정가능)", "📈 성적 및 진로 진단"], 
-                horizontal=True, key="menu_radio", 
-                index=["🤖 AI 학사 지식인", "📅 스마트 시간표(수정가능)", "📈 성적 및 진로 진단"].index(st.session_state.current_menu))
+                horizontal=True, key="menu_radio")
 
 if menu != st.session_state.current_menu:
     st.session_state.current_menu = menu
