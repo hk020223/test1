@@ -69,7 +69,7 @@ if not api_key:
     st.error("🚨 **Google API Key가 설정되지 않았습니다.**")
     st.stop()
 
-# 세션 상태 초기화
+# 세션 상태 초기화 (없으면 생성)
 if "global_log" not in st.session_state:
     st.session_state.global_log = [] 
 if "timetable_result" not in st.session_state:
@@ -150,14 +150,13 @@ class FirebaseManager:
             return None, "Firebase 연결 실패"
         
         try:
-            # users 컬렉션에서 email과 password가 일치하는 문서 검색
             users_ref = self.db.collection('users')
-            # 주의: 실제 서비스에서는 password를 해싱하여 저장/비교해야 함
+            # 평문 비밀번호 비교 (데모용)
             query = users_ref.where('email', '==', email).where('password', '==', password).stream()
             
             for doc in query:
                 user_data = doc.to_dict()
-                user_data['localId'] = doc.id  # 문서 ID를 식별자로 사용
+                user_data['localId'] = doc.id
                 return user_data, None
             
             return None, "이메일 또는 비밀번호가 일치하지 않습니다."
@@ -171,12 +170,10 @@ class FirebaseManager:
 
         try:
             users_ref = self.db.collection('users')
-            # 중복 이메일 확인
             existing_user = list(users_ref.where('email', '==', email).stream())
             if len(existing_user) > 0:
                 return None, "이미 가입된 이메일입니다."
             
-            # 새 유저 문서 생성
             new_user_ref = users_ref.document()
             user_data = {
                 "email": email,
@@ -196,7 +193,6 @@ class FirebaseManager:
             return False
         try:
             user_id = st.session_state.user['localId']
-            # users/{user_id}/{collection}/{doc_id} 경로에 저장
             doc_ref = self.db.collection('users').document(user_id).collection(collection).document(doc_id)
             data['updated_at'] = firestore.SERVER_TIMESTAMP
             doc_ref.set(data)
@@ -242,15 +238,17 @@ def load_knowledge_base():
 PRE_LEARNED_DATA = load_knowledge_base()
 
 # -----------------------------------------------------------------------------
-# [1] AI 엔진 (모델명: gemini-1.5-pro 유지)
+# [1] AI 엔진 (수정 사항 1번 반영: 모델명 변경)
 # -----------------------------------------------------------------------------
 def get_llm():
     if not api_key: return None
-    return ChatGoogleGenerativeAI(model="gemini-1.5-pro", temperature=0)
+    # [수정] 요청하신 모델명 사용
+    return ChatGoogleGenerativeAI(model="gemini-2.5-flash-preview-09-2025", temperature=0)
 
 def get_pro_llm():
     if not api_key: return None
-    return ChatGoogleGenerativeAI(model="gemini-1.5-pro", temperature=0)
+    # [수정] 요청하신 모델명 사용
+    return ChatGoogleGenerativeAI(model="gemini-2.5-flash-preview-09-2025", temperature=0)
 
 def ask_ai(question):
     llm = get_llm()
@@ -267,17 +265,17 @@ def ask_ai(question):
             return "⚠️ **잠시만요!** 사용량이 많아 AI가 숨을 고르고 있습니다. 1분 뒤에 다시 시도해주세요."
         return f"❌ AI 오류: {str(e)}"
 
-# [수정된 부분] 공통 프롬프트 지시사항: 요일별 교시 분리 배정 규칙 추가
+# 공통 프롬프트 지시사항
 COMMON_TIMETABLE_INSTRUCTION = """
 [★★★ 핵심 알고리즘: 3단계 검증 및 필터링 (Strict Verification) ★★★]
 1. **Step 1: 요람(Curriculum) 기반 '수강 대상' 리스트 확정**:
    - PDF 요람 문서에서 **'{major} {grade} {semester}'**에 배정된 **'표준 이수 과목' 목록**을 추출.
 2. **Step 2: 학년 정합성 검사 (Grade Validation)**:
    - 사용자가 선택한 학년({grade})과 시간표의 대상 학년이 일치하지 않으면 과감히 제외.
-3. **Step 3: 시간표 데이터와 정밀 대조 및 요일별 교시 엄수 (Exact Match & Split Schedule)**:
-   - 위 단계를 통과한 과목만 시간표에 배치하세요.
+3. **Step 3: 시간표 데이터와 정밀 대조 (Exact Match)**:
+   - 위 단계를 통과한 과목만 시간표에 배치. 과목명 완전 일치 필수.
    - **[핵심 규칙] 요일별 교시 분리 배정**: 만약 강의 시간이 **'월3, 수4'**로 되어 있다면, **월요일은 3교시만, 수요일은 4교시만** 채워야 합니다.
-   - **절대** '월3,4' 혹은 '수3,4'처럼 연강으로 임의 확장하거나 빈 시간을 채워넣지 마세요. 데이터에 명시된 교시 외에는 빈카드로 두세요.
+   - **절대** '월3,4' 혹은 '수3,4'처럼 연강으로 임의 확장하거나 빈 시간을 채워넣지 마세요.
 4. **출력 형식 (세로형 HTML Table)**:
    - `table` 태그, `width="100%"`.
    - 행: 1~9교시 (시간 포함), 열: 월~일.
@@ -376,7 +374,7 @@ def chat_with_timetable_ai(current_timetable, user_input, major, grade, semester
         return f"❌ AI 오류: {str(e)}"
 
 # =============================================================================
-# [섹션] 성적 및 진로 진단 분석 함수
+# [섹션] 성적 및 진로 진단 분석 함수 (수정 사항 4번 반영)
 # =============================================================================
 def analyze_graduation_requirements(uploaded_images):
     llm = get_pro_llm()
@@ -395,10 +393,15 @@ def analyze_graduation_requirements(uploaded_images):
         })
 
     def _execute():
+        # [수정] 대기업 JD 매핑 및 실명 거론 지시 추가
         prompt = """
         당신은 [냉철하고 현실적인 대기업 인사담당자 출신의 취업 컨설턴트]입니다.
         제공된 학생의 [성적표 이미지]와 [학습된 학사 문서]를 바탕으로 3가지 측면에서 분석 결과를 작성해주세요.
-        빈말이나 위로는 하지 않습니다. 오직 데이터에 기반한 팩트 폭격과 현실적인 조언만 하세요.
+        
+        **[핵심 지시사항 - 중요]**
+        - 단순히 "열심히 하세요" 같은 뜬구름 잡는 조언은 하지 마십시오.
+        - **반드시** 삼성전자, SK하이닉스, 현대자동차, 네이버, 카카오 등 **실제 한국 주요 대기업의 실명과 구체적인 직무명(JD)**을 언급하며 조언하세요.
+        - 예: "삼성전자 DS부문 메모리사업부의 공정기술 직무에서는 반도체공학 A학점 이상을 선호하지만, 현재 학생의 성적은 B+이므로..." 와 같이 구체적으로 비교하세요.
 
         **[출력 형식]**
         반드시 아래의 구분자(`[[SECTION: ...]]`)를 사용하여 답변을 3개의 구역으로 명확히 나누세요.
@@ -416,10 +419,10 @@ def analyze_graduation_requirements(uploaded_images):
         - **수강 패턴 분석:** 꿀강(학점 따기 쉬운 교양) 위주로 들었는지, 기피 과목(어려운 전공)을 피했는지 간파하고 지적하세요.
 
         [[SECTION:CAREER]]
-        ### 💼 3. AI 커리어 솔루션
-        - **직무 추천:** 수강한 전공 과목들의 연관성을 분석하여 가장 적합한 직무(예: 임베디드 SW, 공정기술, 회로설계 등)를 2~3개 추천하세요.
-        - **Skill Gap 분석:** 해당 직무의 시장 요구사항(대기업 채용 기준) 대비 현재 부족한 점을 냉정하게 꼬집으세요.
-        - **Action Plan:** 남은 학기에 반드시 수강해야 할 과목이나, 학교 밖에서 채워야 할 경험(프로젝트, 기사 자격증 등)을 구체적으로 지시하세요.
+        ### 💼 3. AI 커리어 솔루션 (대기업 JD 매칭)
+        - **직무 추천:** 학생의 수강 내역(회로 위주, SW 위주 등)을 분석하여 가장 적합한 **구체적인 대기업 직무**를 2~3개 추천하세요. (예: 삼성전자 회로설계, 현대모비스 임베디드SW 등)
+        - **Skill Gap 분석 (현실 팩폭):** 해당 기업/직무의 실제 채용 트렌드(우대사항)와 학생의 현재 스펙(학점, 이수과목)을 비교하여 부족한 점을 냉정하게 꼬집으세요.
+        - **Action Plan:** 합격을 위해 남은 학기에 반드시 들어야 할 전공 과목이나, 당장 준비해야 할 기사 자격증/어학 성적(OPIc 등) 목표치를 제시하세요.
 
         [학습된 학사 문서]
         """
@@ -456,7 +459,7 @@ def chat_with_graduation_ai(current_analysis, user_input):
         [지시사항]
         - 사용자의 질문에 대해 현실적이고 직설적으로 답변하세요. 위로는 필요 없습니다.
         - 정보 수정 요청(예: "나 이 과목 들었어")이 들어오면 `[수정]` 태그를 붙이고 전체 진단 결과를 업데이트하세요.
-        - 단순 질문에는 현재 성적 상태를 근거로 팩트 기반 답변을 하세요.
+        - **기업 채용 관점**에서 답변하세요. "이 과목은 삼성전자가 좋아합니다/신경 안 씁니다" 식으로 설명하세요.
         
         [참고 문헌]
         {context}
@@ -479,12 +482,13 @@ def chat_with_graduation_ai(current_analysis, user_input):
 # -----------------------------------------------------------------------------
 # [2] UI 구성
 # -----------------------------------------------------------------------------
+# [수정 사항 3번 반영] 메뉴 이동 함수 수정
 def change_menu(menu_name):
     st.session_state.current_menu = menu_name
 
 with st.sidebar:
     st.title("🗂️ 활동 로그")
-    # [로그인 UI - Firebase Firestore 직접 이용]
+    # [로그인 UI]
     if st.session_state.user is None:
         with st.expander("🔐 로그인 / 회원가입", expanded=True):
             auth_mode = st.radio("모드 선택", ["로그인", "회원가입"], horizontal=True)
@@ -512,8 +516,9 @@ with st.sidebar:
                                 st.error(f"오류: {err}")
     else:
         st.info(f"👤 **{st.session_state.user['email']}**님")
+        # [수정 사항 2번 반영] 로그아웃 시 세션 클리어 (데이터 보호 + 화면 리셋)
         if st.button("로그아웃"):
-            st.session_state.user = None
+            st.session_state.clear() # 화면의 임시 데이터 모두 삭제
             st.rerun()
             
     st.divider()
@@ -525,10 +530,11 @@ with st.sidebar:
         else:
             for i, log in enumerate(reversed(st.session_state.global_log)):
                 label = f"[{log['time']}] {log['content'][:15]}..."
+                # [수정 사항 3번 반영] 로그 클릭 시 해당 메뉴로 이동
                 if st.button(label, key=f"log_btn_{i}", use_container_width=True):
                     if log['menu']:
-                        change_menu(log['menu'])
-                        st.rerun()
+                        st.session_state.current_menu = log['menu'] # 메뉴 상태 변경
+                        st.rerun() # 화면 새로고침하여 메뉴 이동 반영
     st.divider()
     if PRE_LEARNED_DATA:
          st.success(f"✅ PDF 문서 학습 완료")
@@ -711,7 +717,6 @@ elif st.session_state.current_menu == "📈 성적 및 진로 진단":
     - KLAS 또는 학교 포털의 성적/학점 조회 화면을 캡처해주세요.
     """)
 
-    # [추가됨] 진단 결과 불러오기 기능
     if st.session_state.user and fb_manager.is_initialized:
         with st.expander("📂 저장된 진단 결과 불러오기"):
             saved_diags = fb_manager.load_collection('graduation_diagnosis')
