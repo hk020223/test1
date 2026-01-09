@@ -242,16 +242,17 @@ def load_knowledge_base():
 PRE_LEARNED_DATA = load_knowledge_base()
 
 # -----------------------------------------------------------------------------
-# [1] AI 엔진
+# [1] AI 엔진 (수정됨: 확실한 버전 넘버 사용)
 # -----------------------------------------------------------------------------
 def get_llm():
     if not api_key: return None
-    # 유효한 모델명으로 수정 (gemini-1.5-flash 등)
-    return ChatGoogleGenerativeAI(model="gemini-1.5-flash", temperature=0)
+    # [수정] 구체적인 버전 'gemini-1.5-flash-001' 사용으로 404 에러 방지
+    return ChatGoogleGenerativeAI(model="gemini-1.5-flash-001", temperature=0)
 
 def get_pro_llm():
     if not api_key: return None
-    return ChatGoogleGenerativeAI(model="gemini-1.5-flash", temperature=0)
+    # [수정] 이미지 분석 모델도 동일하게 구체적인 버전 사용
+    return ChatGoogleGenerativeAI(model="gemini-1.5-flash-001", temperature=0)
 
 def ask_ai(question):
     llm = get_llm()
