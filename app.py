@@ -116,7 +116,6 @@ def run_with_retry(func, *args, **kwargs):
             return func(*args, **kwargs)
         except Exception as e:
             error_msg = str(e)
-            # 429: Quota Exceeded, 503: Service Unavailable
             if "429" in error_msg or "RESOURCE_EXHAUSTED" in error_msg or "503" in error_msg:
                 if i < max_retries - 1:
                     time.sleep(delays[i])
@@ -243,17 +242,17 @@ def load_knowledge_base():
 PRE_LEARNED_DATA = load_knowledge_base()
 
 # -----------------------------------------------------------------------------
-# [1] AI 엔진 (404 오류 방지를 위한 핵심 수정)
+# [1] AI 엔진 (수정됨: gemini-1.5-pro 적용)
 # -----------------------------------------------------------------------------
 def get_llm():
     if not api_key: return None
-    # [수정] 가장 안정적인 정식 버전 넘버 사용
-    return ChatGoogleGenerativeAI(model="gemini-1.5-flash-001", temperature=0)
+    # [수정] 가장 안정적이고 성능이 좋은 1.5 Pro 모델 사용
+    return ChatGoogleGenerativeAI(model="gemini-1.5-pro", temperature=0)
 
 def get_pro_llm():
     if not api_key: return None
-    # [수정] 이미지 분석용 모델도 동일하게 적용
-    return ChatGoogleGenerativeAI(model="gemini-1.5-flash-001", temperature=0)
+    # [수정] 이미지 분석 성능 향상을 위해 1.5 Pro 사용
+    return ChatGoogleGenerativeAI(model="gemini-1.5-pro", temperature=0)
 
 def ask_ai(question):
     llm = get_llm()
@@ -377,7 +376,7 @@ def chat_with_timetable_ai(current_timetable, user_input, major, grade, semester
         return f"❌ AI 오류: {str(e)}"
 
 # =============================================================================
-# [수정된 섹션] 성적 및 진로 진단 분석 함수
+# [섹션] 성적 및 진로 진단 분석 함수
 # =============================================================================
 def analyze_graduation_requirements(uploaded_images):
     llm = get_pro_llm()
