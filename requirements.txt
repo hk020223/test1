@@ -7,3 +7,4 @@ pypdf
 Pillow
 firebase-admin
 requests
+duckduckgo-search
