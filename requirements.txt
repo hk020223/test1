@@ -1,10 +1,11 @@
 streamlit
 pandas
-langchain-google-genai
+plotly
 langchain-community
+langchain-google-genai
 langchain-core
-pypdf
-Pillow
 firebase-admin
-requests
 duckduckgo-search
+pypdf
+pillow
+requests
