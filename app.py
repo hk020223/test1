@@ -78,7 +78,7 @@ if "chat_history" not in st.session_state:
     st.session_state.chat_history = [] 
 if "current_menu" not in st.session_state:
     st.session_state.current_menu = "🤖 AI 학사 지식인"
-# [수정] 라디오 버튼 위젯 상태 초기화 (경고 메시지 방지용)
+# 라디오 버튼 위젯 상태 초기화
 if "menu_radio" not in st.session_state:
     st.session_state["menu_radio"] = "🤖 AI 학사 지식인"
 
@@ -156,12 +156,11 @@ class FirebaseManager:
         try:
             # users 컬렉션에서 email과 password가 일치하는 문서 검색
             users_ref = self.db.collection('users')
-            # 주의: 실제 서비스에서는 password를 해싱하여 저장/비교해야 함
             query = users_ref.where('email', '==', email).where('password', '==', password).stream()
             
             for doc in query:
                 user_data = doc.to_dict()
-                user_data['localId'] = doc.id  # 문서 ID를 식별자로 사용
+                user_data['localId'] = doc.id
                 return user_data, None
             
             return None, "이메일 또는 비밀번호가 일치하지 않습니다."
@@ -175,12 +174,10 @@ class FirebaseManager:
 
         try:
             users_ref = self.db.collection('users')
-            # 중복 이메일 확인
             existing_user = list(users_ref.where('email', '==', email).stream())
             if len(existing_user) > 0:
                 return None, "이미 가입된 이메일입니다."
             
-            # 새 유저 문서 생성
             new_user_ref = users_ref.document()
             user_data = {
                 "email": email,
@@ -200,7 +197,6 @@ class FirebaseManager:
             return False
         try:
             user_id = st.session_state.user['localId']
-            # users/{user_id}/{collection}/{doc_id} 경로에 저장
             doc_ref = self.db.collection('users').document(user_id).collection(collection).document(doc_id)
             data['updated_at'] = firestore.SERVER_TIMESTAMP
             doc_ref.set(data)
@@ -246,7 +242,7 @@ def load_knowledge_base():
 PRE_LEARNED_DATA = load_knowledge_base()
 
 # -----------------------------------------------------------------------------
-# [1] AI 엔진 (gemini-2.5-flash-preview-09-2025 모델 사용)
+# [1] AI 엔진 (gemini-2.5-flash-preview-09-2025)
 # -----------------------------------------------------------------------------
 def get_llm():
     if not api_key: return None
@@ -512,6 +508,7 @@ with st.sidebar:
                             else:
                                 user, err = fb_manager.signup(email, password)
                             
+                            # [로그인 성공 시] clear() 호출 안 함 -> 화면 상태 유지
                             if user:
                                 st.session_state.user = user
                                 st.success(f"환영합니다! ({user['email']})")
@@ -520,10 +517,10 @@ with st.sidebar:
                                 st.error(f"오류: {err}")
     else:
         st.info(f"👤 **{st.session_state.user['email']}**님")
-        # [수정] 로그아웃 시 세션 클리어 후 라디오 버튼 키 값 초기화
+        # [로그아웃 시] clear() 호출 -> 화면/데이터 완전 초기화
         if st.button("로그아웃"):
             st.session_state.clear()
-            st.session_state["menu_radio"] = "🤖 AI 학사 지식인" # 강제 초기화
+            st.session_state["menu_radio"] = "🤖 AI 학사 지식인" 
             st.rerun()
             
     st.divider()
@@ -535,11 +532,10 @@ with st.sidebar:
         else:
             for i, log in enumerate(reversed(st.session_state.global_log)):
                 label = f"[{log['time']}] {log['content'][:15]}..."
-                # [수정] 로그 클릭 시 라디오 버튼 위젯 상태(menu_radio) 동기화
                 if st.button(label, key=f"log_btn_{i}", use_container_width=True):
                     if log['menu']:
                         st.session_state.current_menu = log['menu']
-                        st.session_state["menu_radio"] = log['menu'] # 위젯 Key 강제 업데이트
+                        st.session_state["menu_radio"] = log['menu'] 
                         st.rerun()
     st.divider()
     if PRE_LEARNED_DATA:
@@ -547,7 +543,7 @@ with st.sidebar:
     else:
         st.error("⚠️ 데이터 폴더에 PDF 파일이 없습니다.")
 
-# 메뉴 구성 [수정: index 파라미터 삭제, 상태는 key로만 관리]
+# 메뉴 구성
 menu = st.radio("기능 선택", ["🤖 AI 학사 지식인", "📅 스마트 시간표(수정가능)", "📈 성적 및 진로 진단"], 
                 horizontal=True, key="menu_radio")
 
