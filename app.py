@@ -156,8 +156,11 @@ fb_manager = FirebaseManager()
 # -----------------------------------------------------------------------------
 # [AI 엔진]
 # -----------------------------------------------------------------------------
-def get_llm(): return ChatGoogleGenerativeAI(model="gemini-2.5-flash-preview-09-2025", temperature=0, google_api_key=api_key)
-def get_pro_llm(): return ChatGoogleGenerativeAI(model="gemini-2.5-flash-preview-09-2025", temperature=0, google_api_key=api_key)
+def get_llm(): 
+    return ChatGoogleGenerativeAI(model="gemini-1.5-flash", temperature=0, google_api_key=api_key)
+
+def get_pro_llm(): 
+    return ChatGoogleGenerativeAI(model="gemini-1.5-flash", temperature=0, google_api_key=api_key)
 
 @st.cache_resource
 def load_knowledge_base():
@@ -505,3 +508,4 @@ with tabs[2]:
         
         st.session_state.chat_history.append({"role": "assistant", "content": response})
         st.rerun()
+
