@@ -288,11 +288,13 @@ COMMON_TIMETABLE_INSTRUCTION = """
 6. **출력 순서**: HTML 표 -> 필수 과목 검증 -> 제외 목록
 """
 
-def generate_timetable_ai(major, grade, semester, target_credits, blocked_times_desc, requirements):
+# [수정] 진단 결과를 입력받아 우선순위를 배정하는 로직 추가
+def generate_timetable_ai(major, grade, semester, target_credits, blocked_times_desc, requirements, diagnosis_context=None):
     llm = get_llm()
     if not llm: return "⚠️ API Key 오류"
     def _execute():
-        template = """
+        # 기본 템플릿
+        base_template = """
         너는 대학교 수강신청 전문가야. 오직 제공된 [학습된 문서]의 텍스트 데이터에 기반해서만 시간표를 짜줘.
         [학생 정보]
         - 소속: {major}
@@ -300,14 +302,32 @@ def generate_timetable_ai(major, grade, semester, target_credits, blocked_times_
         - 목표: {target_credits}학점
         - 공강 필수: {blocked_times}
         - 추가요구: {requirements}
-        """ + COMMON_TIMETABLE_INSTRUCTION + """
+        """
+
+        # 진단 결과가 있을 경우 우선순위 로직 추가
+        if diagnosis_context:
+            base_template += f"""
+            [성적 및 진로 진단 결과 (반영 필수)]
+            {diagnosis_context}
+
+            [★★★ 개인화 우선순위 배정 규칙 (Priority Logic) ★★★]
+            1. **1순위 (Must):** 해당 학년/학기에 지정된 표준 이수 필수 과목 (졸업 필수).
+            2. **2순위 (Should):** 위 [성적 및 진로 진단 결과]에서 **'재수강 필요'** 혹은 **'미이수 필수'**로 지적된 과목.
+            3. **3순위 (Could):** 위 [성적 및 진로 진단 결과]의 **'직무 솔루션'**에서 추천한 과목.
+            4. **제외 (Exclude):** 위 진단 결과에서 **이미 이수한 것**으로 확인된 과목 (단, 재수강 대상은 제외).
+            """
+        
+        # 공통 지시사항 및 문서 연결
+        base_template += COMMON_TIMETABLE_INSTRUCTION + """
         [추가 지시사항]
         - **HTML 코드를 마크다운 코드 블록(```html)으로 감싸지 마라.** 그냥 Raw HTML 텍스트로 출력해라.
         [학습된 문서]
         {context}
         """
-        prompt = PromptTemplate(template=template, input_variables=["context", "major", "grade", "semester", "target_credits", "blocked_times", "requirements"])
+        
+        prompt = PromptTemplate(template=base_template, input_variables=["context", "major", "grade", "semester", "target_credits", "blocked_times", "requirements"])
         chain = prompt | llm
+        
         input_data = {
             "context": PRE_LEARNED_DATA,
             "major": major,
@@ -318,6 +338,7 @@ def generate_timetable_ai(major, grade, semester, target_credits, blocked_times_
             "requirements": requirements
         }
         return chain.invoke(input_data).content
+
     try:
         response_content = run_with_retry(_execute)
         return clean_html_output(response_content)
@@ -629,31 +650,20 @@ elif st.session_state.current_menu == "📅 스마트 시간표(수정가능)":
         col1, col2 = st.columns([1, 1.5])
         with col1:
             st.markdown("#### 1️⃣ 기본 정보")
+            # [기존 학과 리스트 유지]
             kw_departments = [
-    # 전자정보공과대학
-    "전자공학과", "전자통신공학과", "전자융합공학과", "전기공학과", "전자재료공학과", "반도체시스템공학부", "로봇학부",
-    # 인공지능융합대학
-    "컴퓨터정보공학부", "소프트웨어학부", "정보융합학부", "지능형로봇학과",
-    # 공과대학
-    "건축학과", "건축공학과", "화학공학과", "환경공학과",
-    # 자연과학대학
-    "수학과", "전자바이오물리학과", "화학과", "스포츠융합과학과", "정보콘텐츠학과",
-    # 인문사회과학대학
-    "국어국문학과", "영어산업학과", "미디어커뮤니케이션학부", "산업심리학과", "동북아문화산업학부",
-    # 정책법학대학
-    "행정학과", "법학부", "국제학부", "자산관리학과",
-    # 경영대학
-    "경영학부", "국제통상학부",
-    # 참빛인재대학 (재직자)
-    "금융부동산법무학과", "게임콘텐츠학과", "스마트전기전자학과", "스포츠상담재활학과",
-    # 자율전공 및 기타
-    "자율전공학부(자연)", "자율전공학부(인문)", "인제니움학부대학"
-]
+                "전자융합공학과", "전자공학과", "전자통신공학과", "전기공학과", 
+                "전자재료공학과", "로봇학부", "컴퓨터정보공학부", "소프트웨어학부", 
+                "정보융합학부", "건축학과", "건축공학과", "화학공학과", "환경공학과"
+            ]
             major = st.selectbox("학과", kw_departments, key="tt_major")
             c1, c2 = st.columns(2)
             grade = c1.selectbox("학년", ["1학년", "2학년", "3학년", "4학년"], key="tt_grade")
             semester = c2.selectbox("학기", ["1학기", "2학기"], key="tt_semester")
             target_credit = st.number_input("목표 학점", 9, 24, 18, key="tt_credit")
+            
+            # [수정] 성적/진단 결과 반영 체크박스 추가
+            use_diagnosis = st.checkbox("☑️ 성적/진로 진단 결과 반영하기 (재수강, 직무 추천 등)", value=True, key="tt_use_diag")
             requirements = st.text_area("추가 요구사항", placeholder="예: 전공 필수 챙겨줘", key="tt_req")
 
         with col2:
@@ -688,8 +698,23 @@ elif st.session_state.current_menu == "📅 스마트 시간표(수정가능)":
                     if not edited_schedule.iloc[idx][day]:
                         blocked_times.append(f"{day}요일 {period_label}")
             blocked_desc = ", ".join(blocked_times) if blocked_times else "없음"
+            
+            # [수정] 데이터 파이프라인 (Silent Fetch 포함)
+            diagnosis_context = ""
+            if use_diagnosis:
+                # 1. 현재 세션에 진단 결과가 있으면 사용
+                if st.session_state.graduation_analysis_result:
+                    diagnosis_context = st.session_state.graduation_analysis_result
+                # 2. 없지만 로그인 유저라면 DB에서 Silent Fetch
+                elif st.session_state.user and fb_manager.is_initialized:
+                    saved_diags = fb_manager.load_collection('graduation_diagnosis')
+                    if saved_diags:
+                        diagnosis_context = saved_diags[0]['result'] # 가장 최근 결과
+                        st.toast("최근 저장된 진단 결과를 불러와 반영했습니다.", icon="✅")
+
             with st.spinner("선수과목 확인 및 시간표 조합 중... (최대 1분 소요될 수 있습니다)"):
-                result = generate_timetable_ai(major, grade, semester, target_credit, blocked_desc, requirements)
+                # [수정] diagnosis_context 전달
+                result = generate_timetable_ai(major, grade, semester, target_credit, blocked_desc, requirements, diagnosis_context)
                 st.session_state.timetable_result = result
                 st.session_state.timetable_chat_history = []
                 add_log("user", f"[시간표] {major} {grade} 생성", "📅 스마트 시간표(수정가능)")
@@ -835,4 +860,3 @@ elif st.session_state.current_menu == "📈 성적 및 진로 진단":
             st.session_state.graduation_analysis_result = ""
             st.session_state.graduation_chat_history = []
             st.rerun()
-
