@@ -5,6 +5,7 @@ import glob
 import datetime
 import time
 import base64
+import re  # 정규표현식 사용
 from langchain_community.document_loaders import PyPDFLoader
 from langchain_google_genai import ChatGoogleGenerativeAI
 from langchain_core.prompts import PromptTemplate
@@ -705,7 +706,118 @@ elif st.session_state.current_menu == "📅 스마트 시간표(수정가능)":
                             st.error("저장 실패")
 
             st.markdown(st.session_state.timetable_result, unsafe_allow_html=True)
-            
+
+            # --------------------------------------------------------------------------------
+            # [추가] 강의계획서 감지 및 요약 버튼 생성 로직 (교수명 매칭 포함)
+            # --------------------------------------------------------------------------------
+            # 1. HTML에서 과목명 및 교수명 추출
+            def extract_course_info(html_code):
+                if not html_code: return []
+                # Pattern: <b>Subject</b><br><small>Professor (Grade)</small>
+                # 정규식으로 Subject와 small 태그 내부 내용 추출
+                matches = re.findall(r"<b>(.*?)</b><br><small>(.*?)</small>", html_code)
+                courses = []
+                for subj, small_content in matches:
+                    # small_content: "홍길동 (1학년)" 또는 "김철수 (전학년)"
+                    # 괄호 앞부분이 교수명
+                    if "(" in small_content:
+                        prof = small_content.split("(")[0].strip()
+                    else:
+                        prof = small_content.strip()
+                    courses.append({"subject": subj.strip(), "professor": prof})
+                return courses
+
+            # 2. 파일 매칭 확인 (Priority 1: 과목_교수.txt, Priority 2: 과목.txt)
+            def match_syllabus_files(courses):
+                matched_list = []
+                if not os.path.exists("data/syllabus"):
+                    return []
+                
+                # 중복 방지용 Set
+                seen = set()
+                
+                for c in courses:
+                    subj = c['subject']
+                    prof = c['professor']
+                    key = f"{subj}_{prof}"
+                    
+                    if key in seen: continue
+                    seen.add(key)
+                    
+                    # 1순위: 과목명_교수명.txt
+                    file_v1 = f"data/syllabus/{subj}_{prof}.txt"
+                    # 2순위: 과목명.txt
+                    file_v2 = f"data/syllabus/{subj}.txt"
+                    
+                    final_file = None
+                    display_label = ""
+                    
+                    if os.path.exists(file_v1):
+                        final_file = file_v1
+                        display_label = f"{subj} ({prof})"
+                    elif os.path.exists(file_v2):
+                        final_file = file_v2
+                        display_label = f"{subj}"
+                        
+                    if final_file:
+                        matched_list.append({
+                            "subject": subj,
+                            "file_path": final_file,
+                            "display_label": display_label
+                        })
+                return matched_list
+
+            # 3. AI 요약 함수 (Dialog 내부 사용)
+            def summarize_syllabus_ai(syllabus_text, subject_name):
+                llm = get_llm()
+                prompt_text = f"""
+                다음은 '{subject_name}' 과목의 강의계획서입니다.
+                이 강의계획서를 분석하여 학생이 알아야 할 핵심 내용을 아래 3가지 포인트로 요약해주세요.
+                
+                1. 🎯 **수업 목표 및 개요** (한 줄 요약)
+                2. 📚 **선수 과목 및 요구 역량** (필요한 지식)
+                3. 💯 **평가 기준** (학점 취득 전략)
+
+                [강의계획서 내용]
+                {syllabus_text[:5000]}
+                """
+                return llm.invoke(prompt_text).content
+
+            # 4. Dialog UI (팝업창)
+            @st.dialog("📚 강의계획서 AI 분석")
+            def view_syllabus_dialog(file_path, display_label):
+                if os.path.exists(file_path):
+                    with open(file_path, "r", encoding="utf-8") as f:
+                        full_text = f.read()
+                    
+                    st.subheader(f"📄 {display_label}")
+                    
+                    # AI 요약 실행
+                    with st.spinner("AI가 강의계획서를 독해하고 있습니다..."):
+                        summary = summarize_syllabus_ai(full_text, display_label)
+                    
+                    st.info(summary)
+                    
+                    # 원문 더보기
+                    with st.expander("🔽 상세 내용(원문) 더보기"):
+                        st.text(full_text)
+                else:
+                    st.error("파일을 찾을 수 없습니다.")
+
+            # 5. UI 렌더링
+            extracted_courses = extract_course_info(st.session_state.timetable_result)
+            matched_courses = match_syllabus_files(extracted_courses)
+
+            if matched_courses:
+                st.caption("✅ **강의계획서 발견:** 아래 버튼을 클릭하면 AI 요약과 원문을 볼 수 있습니다.")
+                # 버튼 나열 (Pills 느낌으로 가로 배치)
+                cols = st.columns(len(matched_courses) + 2) # 여유 공간
+                for i, match in enumerate(matched_courses):
+                    # 버튼 클릭 시 Dialog 호출
+                    if st.button(f"📄 {match['display_label']}", key=f"syl_{i}"):
+                        view_syllabus_dialog(match['file_path'], match['display_label'])
+            # --------------------------------------------------------------------------------
+
             # [신규 저장 버튼] - 불러온 게 아니라 새로 만든 경우 or 복사본 저장
             if st.session_state.user and fb_manager.is_initialized:
                 st.caption("현재 보고 있는 시간표를 **새로운 항목**으로 저장하려면 아래 버튼을 누르세요.")
