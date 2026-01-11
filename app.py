@@ -225,14 +225,14 @@ fb_manager = FirebaseManager()
 # -----------------------------------------------------------------------------
 # [RAG 설정] PDF 로드 및 벡터 스토어 구축 (핵심 수정)
 # -----------------------------------------------------------------------------
-@st.cache_resource(show_spinner="수강신청 자료집(텍스트 문서)만 선별하여 학습 중입니다...")
+# [수정된 버전] 에러 핸들링 추가 및 최신 모델(text-embedding-004) 적용
+@st.cache_resource(show_spinner="자료집/요람 문서를 학습(임베딩) 중입니다...")
 def get_vectorstore():
     if not os.path.exists("data"):
         return None
     
+    # 1. 파일 탐색
     all_files = glob.glob("data/*.pdf")
-    
-    # 📌 필터링 로직: '자료집', '요람', '편람', '안내' 포함 AND '시간표' 미포함
     target_keywords = ["자료집", "요람", "편람", "안내"]
     
     pdf_files = []
@@ -240,14 +240,12 @@ def get_vectorstore():
         filename = os.path.basename(f)
         if any(keyword in filename for keyword in target_keywords) and "시간표" not in filename:
             pdf_files.append(f)
-            print(f"✅ 학습 대상 포함: {filename}")
-        else:
-            print(f"❌ 학습 대상 제외: {filename}")
-
+            print(f"✅ 학습 대상: {filename}")
+    
     if not pdf_files:
-        # 파일이 없어도 앱이 죽지 않도록 처리
         return None
     
+    # 2. PDF 로드
     documents = []
     for pdf_file in pdf_files:
         try:
@@ -255,8 +253,41 @@ def get_vectorstore():
             docs = loader.load()
             documents.extend(docs)
         except Exception as e:
-            print(f"Error loading {pdf_file}: {e}")
+            print(f"❌ 파일 로드 실패 ({pdf_file}): {e}")
             continue
+    
+    if not documents:
+        return None
+
+    # 3. 텍스트 분할 (청크 크기 조절)
+    text_splitter = RecursiveCharacterTextSplitter(
+        chunk_size=800,  # 1000 -> 800으로 줄여서 안정성 확보
+        chunk_overlap=100,
+        separators=["\n\n", "\n", " ", ""]
+    )
+    splits = text_splitter.split_documents(documents)
+    print(f"📊 총 {len(splits)}개의 문서 조각으로 분할됨")
+
+    # 4. 임베딩 & 벡터 스토어 생성 (최신 모델 적용 + 에러 확인)
+    try:
+        # [변경] embedding-001 -> text-embedding-004 (성능/안정성 향상)
+        # [변경] task_type 지정 (필수 권장사항)
+        embeddings = GoogleGenerativeAIEmbeddings(
+            model="models/text-embedding-004", 
+            google_api_key=api_key,
+            task_type="retrieval_document"
+        )
+        
+        # 문서가 너무 많으면 배치가 실패할 수 있으므로, FAISS 생성 시도
+        vectorstore = FAISS.from_documents(documents=splits, embedding=embeddings)
+        print("✅ 벡터 스토어 생성 완료!")
+        return vectorstore
+        
+    except Exception as e:
+        # ⚠️ Streamlit 화면엔 안 보일 수 있으니 로그(터미널)에 출력
+        print(f"🚨 임베딩 생성 중 치명적 오류 발생:\n{str(e)}")
+        st.error(f"임베딩 모델 오류가 발생했습니다. (Logs 확인 필요)\n원인: {str(e)}")
+        return None
     
     if not documents:
         return None
