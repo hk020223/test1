@@ -91,6 +91,10 @@ if "graduation_chat_history" not in st.session_state:
 if "user" not in st.session_state:
     st.session_state.user = None
 
+# 현재 불러온 시간표 메타데이터 (ID, 이름, 즐겨찾기 여부 등) 관리용
+if "current_timetable_meta" not in st.session_state:
+    st.session_state.current_timetable_meta = {}
+
 def add_log(role, content, menu_context=None):
     timestamp = datetime.datetime.now().strftime("%H:%M")
     st.session_state.global_log.append({
@@ -192,7 +196,7 @@ class FirebaseManager:
             return None, f"회원가입 오류: {str(e)}"
 
     def save_data(self, collection, doc_id, data):
-        """데이터 저장"""
+        """데이터 저장 (덮어쓰기)"""
         if not self.is_initialized or not st.session_state.user:
             return False
         try:
@@ -200,6 +204,19 @@ class FirebaseManager:
             doc_ref = self.db.collection('users').document(user_id).collection(collection).document(doc_id)
             data['updated_at'] = firestore.SERVER_TIMESTAMP
             doc_ref.set(data)
+            return True
+        except:
+            return False
+
+    def update_data(self, collection, doc_id, data):
+        """데이터 부분 업데이트 (이름 변경, 즐겨찾기 등)"""
+        if not self.is_initialized or not st.session_state.user:
+            return False
+        try:
+            user_id = st.session_state.user['localId']
+            doc_ref = self.db.collection('users').document(user_id).collection(collection).document(doc_id)
+            data['updated_at'] = firestore.SERVER_TIMESTAMP
+            doc_ref.update(data)
             return True
         except:
             return False
@@ -609,39 +626,113 @@ if st.session_state.current_menu == "🤖 AI 학사 지식인":
 elif st.session_state.current_menu == "📅 스마트 시간표(수정가능)":
     st.subheader("📅 AI 맞춤형 시간표 설계")
     
+    # [시간표 불러오기 및 관리 섹션 (UI 개편)]
     if st.session_state.user and fb_manager.is_initialized:
-        with st.expander("📂 저장된 시간표 불러오기"):
-            saved_tables = fb_manager.load_collection('timetables')
-            if saved_tables:
-                selected_table = st.selectbox("불러올 시간표 선택", 
-                                            options=saved_tables, 
-                                            format_func=lambda x: f"{x['major']} {x['grade']} ({x['created_at'].strftime('%Y-%m-%d %H:%M')})")
-                if st.button("불러오기"):
-                    st.session_state.timetable_result = selected_table['result']
-                    st.success("시간표를 불러왔습니다!")
-                    st.rerun()
+        saved_tables = fb_manager.load_collection('timetables')
+        
+        # 데이터 전처리: 필드가 없는 경우 기본값 할당
+        fav_tables = []
+        archive_tables = []
+        
+        for t in saved_tables:
+            # 기본 이름과 즐겨찾기 상태 설정
+            if 'name' not in t:
+                t['name'] = t['created_at'].strftime('%Y-%m-%d 시간표')
+            if 'is_favorite' not in t:
+                t['is_favorite'] = False
+            
+            if t['is_favorite']:
+                fav_tables.append(t)
             else:
-                st.info("저장된 시간표가 없습니다.")
+                archive_tables.append(t)
+        
+        # [1] 즐겨찾기 (Quick Access)
+        if fav_tables:
+            st.markdown("##### ⭐ 즐겨찾기 (Quick Access)")
+            cols = st.columns(4) # 한 줄에 4개씩
+            for idx, table in enumerate(fav_tables):
+                with cols[idx % 4]:
+                    if st.button(f"📄 {table['name']}", key=f"fav_{table['id']}", use_container_width=True):
+                        st.session_state.timetable_result = table['result']
+                        st.session_state.current_timetable_meta = {
+                            "id": table['id'],
+                            "name": table['name'],
+                            "is_favorite": table['is_favorite']
+                        }
+                        st.toast(f"'{table['name']}'을(를) 불러왔습니다.")
+                        st.rerun()
 
+        # [2] 보관함 (Archive) - Expander 안에 Grid 배치
+        with st.expander("📂 내 시간표 보관함 (클릭하여 열기)", expanded=False):
+            if not archive_tables:
+                st.info("보관된 시간표가 없습니다.")
+            else:
+                cols = st.columns(4)
+                for idx, table in enumerate(archive_tables):
+                    with cols[idx % 4]:
+                        if st.button(f"📄 {table['name']}", key=f"arc_{table['id']}", use_container_width=True):
+                            st.session_state.timetable_result = table['result']
+                            st.session_state.current_timetable_meta = {
+                                "id": table['id'],
+                                "name": table['name'],
+                                "is_favorite": table['is_favorite']
+                            }
+                            st.toast(f"'{table['name']}'을(를) 불러왔습니다.")
+                            st.rerun()
+
+    # [메인 시간표 영역]
     timetable_area = st.empty()
     if st.session_state.timetable_result:
         with timetable_area.container():
             st.markdown("### 🗓️ 내 시간표")
+
+            # [시간표 관리자 툴바] - 불러온 시간표가 있을 때만 표시
+            current_meta = st.session_state.get("current_timetable_meta", {})
+            if current_meta and st.session_state.user and fb_manager.is_initialized:
+                with st.container(border=True):
+                    c1, c2, c3 = st.columns([2, 1, 0.8])
+                    new_name = c1.text_input("시간표 이름", value=current_meta.get('name', ''), label_visibility="collapsed", placeholder="시간표 이름 입력")
+                    is_fav = c2.checkbox("⭐ 즐겨찾기 고정", value=current_meta.get('is_favorite', False))
+                    
+                    if c3.button("정보 수정 저장", use_container_width=True):
+                        if fb_manager.update_data('timetables', current_meta['id'], {'name': new_name, 'is_favorite': is_fav}):
+                            st.session_state.current_timetable_meta['name'] = new_name
+                            st.session_state.current_timetable_meta['is_favorite'] = is_fav
+                            st.toast("정보가 수정되었습니다. (즐겨찾기 이동 등은 새로고침 후 반영됩니다)", icon="✅")
+                            time.sleep(1)
+                            st.rerun()
+                        else:
+                            st.error("저장 실패")
+
             st.markdown(st.session_state.timetable_result, unsafe_allow_html=True)
             
+            # [신규 저장 버튼] - 불러온 게 아니라 새로 만든 경우 or 복사본 저장
             if st.session_state.user and fb_manager.is_initialized:
-                if st.button("☁️ 현재 시간표 저장하기"):
-                    current_major = st.session_state.get("tt_major", "알수없음")
-                    current_grade = st.session_state.get("tt_grade", "알수없음")
+                st.caption("현재 보고 있는 시간표를 **새로운 항목**으로 저장하려면 아래 버튼을 누르세요.")
+                if st.button("☁️ 현재 시간표를 새 이름으로 저장"):
+                    current_major = st.session_state.get("tt_major", "학과미정")
+                    current_grade = st.session_state.get("tt_grade", "")
+                    
+                    # 저장할 데이터
                     doc_data = {
                         "result": st.session_state.timetable_result,
                         "major": current_major,
                         "grade": current_grade,
+                        "name": f"{current_major} {current_grade} (새 시간표)", # 기본 이름
+                        "is_favorite": False,
                         "created_at": datetime.datetime.now()
                     }
                     doc_id = str(int(time.time()))
                     if fb_manager.save_data('timetables', doc_id, doc_data):
+                        # 저장 후 메타데이터 업데이트 (바로 관리 가능하도록)
+                        st.session_state.current_timetable_meta = {
+                            "id": doc_id,
+                            "name": doc_data["name"],
+                            "is_favorite": False
+                        }
                         st.toast("시간표가 저장되었습니다!", icon="✅")
+                        time.sleep(1)
+                        st.rerun()
                     else:
                         st.toast("저장 실패", icon="❌")
             st.divider()
@@ -732,6 +823,8 @@ elif st.session_state.current_menu == "📅 스마트 시간표(수정가능)":
                 result = generate_timetable_ai(major, grade, semester, target_credit, blocked_desc, requirements, diagnosis_context)
                 st.session_state.timetable_result = result
                 st.session_state.timetable_chat_history = []
+                # 새로 생성했으므로 메타데이터 초기화 (저장 전)
+                st.session_state.current_timetable_meta = {} 
                 add_log("user", f"[시간표] {major} {grade} 생성", "📅 스마트 시간표(수정가능)")
                 st.rerun()
 
@@ -756,6 +849,19 @@ elif st.session_state.current_menu == "📅 스마트 시간표(수정가능)":
                         st.session_state.timetable_result = new_timetable
                         with timetable_area.container():
                             st.markdown("### 🗓️ 내 시간표")
+                            # 수정 시 관리자 도구 유지
+                            current_meta = st.session_state.get("current_timetable_meta", {})
+                            if current_meta and st.session_state.user and fb_manager.is_initialized:
+                                with st.container(border=True):
+                                    c1, c2, c3 = st.columns([2, 1, 0.8])
+                                    new_name = c1.text_input("시간표 이름", value=current_meta.get('name', ''), label_visibility="collapsed")
+                                    is_fav = c2.checkbox("⭐ 즐겨찾기 고정", value=current_meta.get('is_favorite', False))
+                                    if c3.button("정보 수정 저장", use_container_width=True):
+                                         if fb_manager.update_data('timetables', current_meta['id'], {'name': new_name, 'is_favorite': is_fav}):
+                                            st.session_state.current_timetable_meta['name'] = new_name
+                                            st.session_state.current_timetable_meta['is_favorite'] = is_fav
+                                            st.rerun()
+
                             st.markdown(new_timetable, unsafe_allow_html=True)
                             st.divider()
                         success_msg = "시간표를 수정했습니다. 위쪽 표가 업데이트 되었습니다."
@@ -778,8 +884,8 @@ elif st.session_state.current_menu == "📈 성적 및 진로 진단":
             saved_diags = fb_manager.load_collection('graduation_diagnosis')
             if saved_diags:
                 selected_diag = st.selectbox("불러올 진단 선택", 
-                                           saved_diags, 
-                                           format_func=lambda x: datetime.datetime.fromtimestamp(int(x['id'])).strftime('%Y-%m-%d %H:%M'))
+                                             saved_diags, 
+                                             format_func=lambda x: datetime.datetime.fromtimestamp(int(x['id'])).strftime('%Y-%m-%d %H:%M'))
                 if st.button("진단 결과 불러오기"):
                     st.session_state.graduation_analysis_result = selected_diag['result']
                     st.success("진단 결과를 불러왔습니다!")
@@ -808,17 +914,22 @@ elif st.session_state.current_menu == "📈 성적 및 진로 진단":
         
         try:
             if "[[SECTION:GRADUATION]]" in result_text:
-                parts = result_text.split("[[SECTION:GRADUATION]]")
+                parts = result_text.split("[[[SECTION:GRADUATION]]")
                 if len(parts) > 1:
                     temp = parts[1]
-                    if "[[SECTION:GRADES]]" in temp:
-                        sec_grad, remaining = temp.split("[[SECTION:GRADES]]")
-                        if "[[SECTION:CAREER]]" in remaining:
-                            sec_grade, sec_career = remaining.split("[[SECTION:CAREER]]")
-                        else:
-                            sec_grade = remaining
+                else:
+                    # [[SECTION:GRADUATION]] 태그가 맨 앞에 있거나 split이 제대로 안된 경우
+                    # 혹시 모르니 그냥 result_text에서 찾기 시도
+                    temp = result_text.split("[[SECTION:GRADUATION]]")[-1]
+
+                if "[[SECTION:GRADES]]" in temp:
+                    sec_grad, remaining = temp.split("[[SECTION:GRADES]]")
+                    if "[[SECTION:CAREER]]" in remaining:
+                        sec_grade, sec_career = remaining.split("[[SECTION:CAREER]]")
                     else:
-                        sec_grad = temp
+                        sec_grade = remaining
+                else:
+                    sec_grad = temp
             else:
                 sec_grad = result_text
         except:
@@ -875,5 +986,3 @@ elif st.session_state.current_menu == "📈 성적 및 진로 진단":
             st.session_state.graduation_analysis_result = ""
             st.session_state.graduation_chat_history = []
             st.rerun()
-
-
