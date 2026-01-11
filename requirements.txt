@@ -1,6 +1,7 @@
 streamlit
 pandas
 plotly
+langchain
 langchain-community
 langchain-google-genai
 langchain-core
@@ -9,3 +10,5 @@ duckduckgo-search
 pypdf
 pillow
 requests
+faiss-cpu
+
