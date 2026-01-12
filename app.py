@@ -326,7 +326,7 @@ def ask_ai(question):
 
 # [수정] 9대 정밀 검증 필터 및 출력 제어 프롬프트 (최종)
 COMMON_TIMETABLE_INSTRUCTION = """
-[★★★ 9대 정밀 검증 및 필터링 규칙 (9 Strict Validation Rules) ★★★]
+[★★★ 9대 정밀 검증 및 필터링 규칙 (9 Strict Verification Rules) ★★★]
 1. **⚠️ 요일/교시 분리 배정 (Time Slot 1:1 Mapping - CRITICAL)**:
    - 강의 시간이 '월1, 수2'라면 **월요일 1교시**와 **수요일 2교시**에만 배치하라.
    - **절대** '월1,2' 또는 '수1,2' 처럼 연강으로 임의 해석하거나 뻥튀기하지 마라.
@@ -343,7 +343,7 @@ COMMON_TIMETABLE_INSTRUCTION = """
 
 5. **🔍 비고란 제약 검증 (Remarks Check - CRITICAL)**:
    - 강의시간표 PDF의 **'비고'**란을 반드시 읽어라.
-   - '외국인전용', '타과생수강불가', 'XX학과전용' 등의 키워드가 내 정보와 맞지 않으면 **무조건 제외**하라.
+   - '외국인전용', '타과생수강불가', 'XX학과전용', '참빛인재' 등의 키워드가 내 정보와 맞지 않으면 **무조건 제외**하라.
 
 6. **🏫 분반 정합성 체크 (Class Division)**:
    - 전공 과목의 경우, 분반이 특정 학과나 반으로 제한되어 있다면 내 학과와 일치하는지 확인하라.
@@ -359,10 +359,13 @@ COMMON_TIMETABLE_INSTRUCTION = """
 
 [★★★ 출력 형식 (Output Format) - 엄수 ★★★]
 1. **서론, 제목, 인사말 절대 금지.** 오직 결과 데이터만 출력하라.
-2. **HTML Table**: `<table>...</table>` 태그로 시작하는 세로형 시간표(색상 포함)를 가장 먼저 출력하라.
-3. **검증 리포트 태그**: 테이블 뒤에 `[[REPORT_START]]`와 `[[REPORT_END]]` 사이에 **검증 및 배정 현황(긍정적)**을 요약하라.
-   - 포함 내용: 1) 기이수 제외 건수, 2) 재수강 반영 여부, 3) **이번 학기 교양 배정 현황(영역/과목명/난이도 - 중복 없음 확인용)**, 4) 원격강의 과목 수.
-4. **선수과목 체크리스트**: 맨 마지막에 `[⚠️ 선수과목 체크리스트]` 섹션을 만들어라.
+2. **HTML Table**: `<table>...</table>` 태그로 시작하는 세로형 시간표를 가장 먼저 출력하라.
+   - **셀 형식:** `<b>과목명</b><br><small>교수명</small>` (교수명 필수 포함)
+3. **상세 정보 리스트**: 테이블 뒤에 `[[DETAILED_LIST_START]]`와 `[[DETAILED_LIST_END]]` 사이에 생성된 과목들의 상세 정보를 **마크다운 표** 형식으로 정리하라.
+   - 컬럼: `| 구분 | 과목명 | 학정번호 | 학점 | 시간 | 담당교수 | 비고 |`
+4. **검증 리포트 태그**: 상세 리스트 뒤에 `[[REPORT_START]]`와 `[[REPORT_END]]` 사이에 **검증 및 배정 현황(긍정적)**을 요약하라.
+   - 내용: 1) 기이수 제외 건수, 2) 재수강 반영 여부, 3) **이번 학기 교양 배정 현황(영역/과목명/난이도 - 중복 없음 확인용)**, 4) 원격강의 과목 수.
+5. **선수과목 체크리스트**: 맨 마지막에 `[⚠️ 선수과목 체크리스트]` 섹션을 만들어라.
 """
 
 # [수정] generate_timetable_ai 함수 (리스트->문자열 변환 및 Prompt 적용)
@@ -783,8 +786,10 @@ elif st.session_state.current_menu == "📅 스마트 시간표(수정가능)":
                             st.rerun()
                         else: st.error("저장 실패")
 
-            # 파싱 및 출력 로직 (Table -> Syllabus -> Report -> Checklist)
+            # 파싱 및 출력 로직 (Table -> Syllabus -> Detailed List -> Report -> Checklist)
             full_result = st.session_state.timetable_result
+            
+            # 1. HTML Table 분리
             if "</table>" in full_result:
                 parts = full_result.split("</table>", 1)
                 table_part = parts[0] + "</table>"
@@ -793,17 +798,31 @@ elif st.session_state.current_menu == "📅 스마트 시간표(수정가능)":
                 table_part = full_result
                 remaining_part = ""
 
-            if "[[REPORT_START]]" in remaining_part and "[[REPORT_END]]" in remaining_part:
-                pre_report, report_chunk = remaining_part.split("[[REPORT_START]]", 1)
+            # 2. Detailed List 분리
+            if "[[DETAILED_LIST_START]]" in remaining_part and "[[DETAILED_LIST_END]]" in remaining_part:
+                pre_list, list_chunk = remaining_part.split("[[DETAILED_LIST_START]]", 1)
+                list_body, post_list = list_chunk.split("[[DETAILED_LIST_END]]", 1)
+                detailed_list_text = list_body.strip()
+                remaining_after_list = post_list
+            else:
+                detailed_list_text = ""
+                remaining_after_list = remaining_part
+
+            # 3. 검증 리포트 분리
+            if "[[REPORT_START]]" in remaining_after_list and "[[REPORT_END]]" in remaining_after_list:
+                _, report_chunk = remaining_after_list.split("[[REPORT_START]]", 1)
                 report_body, post_report = report_chunk.split("[[REPORT_END]]", 1)
                 report_text = report_body.strip()
-                checklist_text = pre_report + post_report
+                checklist_text = post_report
             else:
                 report_text = ""
-                checklist_text = remaining_part
+                checklist_text = remaining_after_list
 
+            # [UI 렌더링]
+            # 1) 시간표
             st.markdown(table_part, unsafe_allow_html=True)
 
+            # 2) 강의계획서 뷰어
             def extract_course_info(html_code):
                 if not html_code: return []
                 matches = re.findall(r"<b>(.*?)</b><br><small>(.*?)</small>", html_code)
@@ -858,11 +877,19 @@ elif st.session_state.current_menu == "📅 스마트 시간표(수정가능)":
                         except Exception as e: st.error(f"오류: {e}")
                 st.divider()
 
+            # 3) 상세 정보 리스트 (NEW)
+            if detailed_list_text:
+                st.markdown("##### 📋 과목별 상세 정보")
+                st.markdown(detailed_list_text)
+                st.divider()
+
+            # 4) 검증 리포트 (Expander)
             if report_text:
                 with st.expander("🔍 시간표 생성 검증 리포트 (클릭하여 확인)", expanded=False):
                     st.info("AI가 시간표 생성 과정에서 수행한 검증 및 배정 현황입니다.")
                     st.markdown(report_text)
 
+            # 5) 체크리스트
             if checklist_text.strip():
                 st.markdown(checklist_text, unsafe_allow_html=True)
             
