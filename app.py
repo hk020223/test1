@@ -19,47 +19,139 @@ from firebase_admin import credentials, firestore
 # -----------------------------------------------------------------------------
 # [0] 설정 및 데이터 로드
 # -----------------------------------------------------------------------------
-st.set_page_config(page_title="KW-강의마스터 Pro", page_icon="🎓", layout="wide")
+# 1. 페이지 설정 (아이콘 수정됨)
+st.set_page_config(
+    page_title="KW-Plan: AI 학사 설계",
+    page_icon="🦄",
+    layout="wide"
+)
 
-# [모바일 최적화 CSS 및 컴팩트 뷰 스타일링]
-st.markdown("""
-    <style>
+# 2. 통합 스타일 설정 (버건디 테마 + 모바일 최적화 + 채팅창 디자인/정렬 수정)
+def set_style():
+    st.markdown("""
+        <style>
+        /* 1. 전체 배경: 화이트 -> 아주 연한 버건디 틴트 */
+        .stApp {
+            background: linear-gradient(180deg, #FFFFFF 0%, #FFF0F5 100%) !important;
+            background-attachment: fixed !important;
+        }
+
+        /* 2. 타이틀 색상 */
+        h1 {
+            color: #8A1538 !important;
+            font-family: 'Pretendard', sans-serif;
+            font-weight: 800;
+        }
+
+        /* 3. 메뉴(라디오 버튼) 스타일 */
+        div.row-widget.stRadio > div {
+            justify-content: center;
+            gap: 15px;
+        }
+        div.row-widget.stRadio > div[role="radiogroup"] > label {
+            background-color: white;
+            border: 2px solid #E9ECEF;
+            padding: 10px 20px;
+            border-radius: 12px;
+            font-weight: bold;
+            color: #495057;
+            box-shadow: 0 2px 4px rgba(0,0,0,0.03);
+            transition: all 0.2s;
+        }
+        div.row-widget.stRadio > div[role="radiogroup"] > label:hover,
+        div.row-widget.stRadio > div[role="radiogroup"] > label[data-checked="true"] {
+            border-color: #8A1538;
+            background-color: #FFF5F7;
+            color: #8A1538;
+        }
+
+        /* 4. [핵심 수정] 채팅 입력창 디자인 및 버튼 정렬 */
+        
+        /* 4-1. 입력창 껍데기 투명화 */
+        [data-testid="stChatInput"] {
+            background-color: transparent !important;
+            border-color: transparent !important;
+        }
+        [data-testid="stChatInput"] > div {
+            background-color: transparent !important;
+            border-color: transparent !important;
+            box-shadow: none !important;
+        }
+        
+        /* 4-2. 하단 영역 전체 투명화 */
+        [data-testid="stBottom"] {
+            background-color: transparent !important;
+            border: none !important;
+            box-shadow: none !important;
+        }
+        [data-testid="stBottom"] > div {
+            background-color: transparent !important;
+        }
+
+        /* 4-3. 입력칸(Textarea) 높이 및 패딩 고정 */
+        textarea[data-testid="stChatInputTextArea"] {
+            background-color: #FFFFFF !important;
+            border: 2px solid #8A1538 !important;
+            border-radius: 30px !important;
+            
+            /* 높이와 패딩을 강제로 맞춰서 버튼 공간 확보 */
+            min-height: 50px !important; 
+            height: 50px !important;
+            padding-top: 12px !important;
+            padding-bottom: 12px !important;
+            padding-right: 50px !important; /* 버튼이 들어갈 오른쪽 공간 확보 */
+            
+            box-shadow: 0 4px 12px rgba(138, 21, 56, 0.1) !important;
+            color: #333333 !important;
+            align-items: center !important;
+        }
+        
+        /* 포커스 효과 */
+        textarea[data-testid="stChatInputTextArea"]:focus {
+            box-shadow: 0 0 0 3px rgba(138, 21, 56, 0.2) !important;
+        }
+
+        /* 4-4. [중요] 전송 버튼(아이콘) 강제 중앙 정렬 */
+        [data-testid="stChatInputSubmitButton"] {
+            background-color: transparent !important;
+            color: #8A1538 !important;
+            
+            /* 절대 위치로 강제 중앙 정렬 */
+            position: absolute !important;
+            top: 50% !important;
+            right: 10px !important;
+            transform: translateY(-50%) !important;
+            
+            border: none !important;
+            height: 40px !important;
+            width: 40px !important;
+            display: flex !important;
+            align-items: center !important;
+            justify-content: center !important;
+            z-index: 99 !important;
+        }
+        
+        [data-testid="stChatInputSubmitButton"] svg {
+            width: 20px !important;
+            height: 20px !important;
+        }
+
+        /* 5. 모바일 최적화 */
         footer { visibility: hidden; }
-        /* 모바일 최적화 */
         @media only screen and (max-width: 600px) {
             .main .block-container {
                 padding-left: 0.2rem !important;
                 padding-right: 0.2rem !important;
-                padding-top: 2rem !important;
-                max-width: 100% !important;
             }
         }
-        /* 시간표 테이블 스타일 */
         div[data-testid="stMarkdownContainer"] table {
             width: 100% !important;
             table-layout: fixed !important;
-            display: table !important;
-            font-size: 11px !important;
-            margin-bottom: 0px !important;
         }
-        div[data-testid="stMarkdownContainer"] th, 
-        div[data-testid="stMarkdownContainer"] td {
-            padding: 2px !important;
-            word-wrap: break-word !important;
-            word-break: break-all !important;
-            white-space: normal !important;
-            line-height: 1.2 !important;
-            vertical-align: middle !important;
-        }
-        /* 버튼 높이 조정 */
-        button[kind="primary"], button[kind="secondary"] {
-            padding: 0.2rem 0.5rem !important;
-            min-height: 0px !important;
-            height: auto !important;
-        }
-    </style>
-""", unsafe_allow_html=True)
+        </style>
+    """, unsafe_allow_html=True)
 
+set_style()
 # API Key 로드
 if "GOOGLE_API_KEY" in st.secrets:
     api_key = st.secrets["GOOGLE_API_KEY"]
@@ -1009,6 +1101,7 @@ elif st.session_state.current_menu == "📈 성적 및 진로 진단":
             st.session_state.graduation_analysis_result = ""
             st.session_state.graduation_chat_history = []
             st.rerun()
+
 
 
 
