@@ -290,7 +290,7 @@ def ask_ai(question):
         return f"❌ AI 오류: {str(e)}"
 
 # =============================================================================
-# [Helper Functions] 인터랙티브 시간표 & AI 추천 (Compact View & Reason)
+# [Helper Functions] 인터랙티브 시간표 & AI 데이터 추출 (Strict Fact-Based)
 # =============================================================================
 
 # 1. 시간 충돌 감지 로직
@@ -350,46 +350,59 @@ def render_interactive_timetable(schedule_list):
     html += "</table>"
     return html
 
-# 3. AI 후보군 추출 (Reason 포함)
+# 3. AI 후보군 추출 (엄격한 데이터 파싱 - 주관 배제)
 def get_course_candidates_json(major, grade, semester, diagnosis_text=""):
     llm = get_llm()
     if not llm: return []
 
-    # [수정] reason 필드 추가 및 구체적 작성 지시
+    # [수정] Career/Recommendation 배제 및 전수 조사 중심 프롬프트
     prompt_template = """
-    너는 대학교 수강신청 데이터 추출기야. 
-    제공된 [문서]와 [진단결과]를 바탕으로, 해당 학년/학기에 수강 가능한 **모든 강의 리스트**를 JSON 포맷으로 추출해.
+    너는 [대학교 학사 데이터베이스 파서]이다. 
+    제공된 [수강신청자료집/시간표 문서]를 분석하여 **{major} {grade} {semester}** 학생이 수강 가능한 **모든 정규 개설 과목**을 JSON 리스트로 추출하라.
     
     [학생 정보]
     - 전공: {major}
     - 대상: {grade} {semester}
     
-    [진단 결과 (재수강/추천 정보)]
+    [진단 결과 (재수강 체크용)]
     {diagnosis_context}
     
-    [지시사항]
-    1. **재수강/추천 사유(reason) 작성:** [진단 결과]를 분석하여 **"왜 이 과목을 들어야 하는지"** 한 문장으로 작성해.
-       - 예: "지난 학기 F학점으로 재수강 필수", "삼성전자 회로 직무 우대 과목", "졸업 필수 요건 충족"
-    2. **우선순위(priority):** - 재수강이거나 졸업필수면 "High"
-       - 직무 추천이면 "Medium"
-       - 나머지는 "Normal"
-    3. **데이터 정규화:** `time_slots`는 반드시 ["월1", "수2"] 형태.
+    [엄격한 제약 사항]
+    1. **주관적 추천 금지:** "취업에 유리함", "커리어 도움됨" 같은 추측성 설명은 절대 하지 마라.
+    2. **전수 조사:** 해당 학과/학년/학기에 배정된 과목은 하나도 빠뜨리지 말고 모두 포함하라. (분반이 다르면 모두 포함)
+    3. **제외 대상:** 타 학과 전용 과목, 해당 학년 대상이 아닌 과목은 리스트에서 제외하라.
+    4. **Reason 필드 작성 규칙:** - 기본적으로 **"이수구분(전공필수/선택/교양) | 학점"** 형식의 팩트만 적어라.
+       - 단, [진단 결과]에 "재수강"이 명시된 과목은 **"재수강 필수 대상"**이라고 적어라.
+    5. **Priority 설정:**
+       - 전공필수 또는 재수강 과목 = "High"
+       - 전공선택 = "Medium"
+       - 교양/기타 = "Normal"
     
     [JSON 출력 포맷 예시]
     [
         {{
-            "id": "unique_id",
-            "name": "과목명",
-            "professor": "교수명",
+            "id": "unique_id_1",
+            "name": "회로이론1",
+            "professor": "김광운",
             "credits": 3,
             "time_slots": ["월3", "수4"],
             "classification": "전공필수",
             "priority": "High", 
-            "reason": "직전 학기 F학점으로 인한 재수강 필수"
+            "reason": "전공필수 | 3학점"
+        }},
+         {{
+            "id": "unique_id_2",
+            "name": "대학영어",
+            "professor": "Smith",
+            "credits": 2,
+            "time_slots": ["화1", "목1"],
+            "classification": "교양필수",
+            "priority": "Normal", 
+            "reason": "교양필수 | 2학점"
         }}
     ]
     
-    **오직 JSON 리스트만 출력해.**
+    **오직 JSON 리스트만 출력하라.**
     [문서 데이터]
     {context}
     """
@@ -717,7 +730,7 @@ elif st.session_state.current_menu == "📅 스마트 시간표(수정가능)":
                      diag_text = saved_diags[0]['result']
                      st.toast("저장된 진단 결과를 불러왔습니다.")
 
-            with st.spinner("요람과 진단 결과를 분석해 추천 사유(Reason)가 포함된 강의 목록을 추출 중입니다..."):
+            with st.spinner("요람에서 해당 학기 개설 과목을 전수 조사 중입니다..."):
                 candidates = get_course_candidates_json(major, grade, semester, diag_text)
                 if candidates:
                     st.session_state.candidate_courses = candidates
@@ -738,7 +751,6 @@ elif st.session_state.current_menu == "📅 스마트 시간표(수정가능)":
             st.subheader("📚 강의 선택")
             st.caption("담은 과목은 목록에서 자동으로 사라집니다.")
             
-            # [수정] 스크롤 컨테이너 적용 (높이 600px)
             with st.container(height=600, border=True):
                 tab1, tab2, tab3 = st.tabs(["🔥 필수/재수강", "🏫 전공선택", "🧩 교양/기타"])
                 
@@ -761,12 +773,10 @@ elif st.session_state.current_menu == "📅 스마트 시간표(수정가능)":
                         border_color = "#cce5ff" # 파란 테두리
                         reason_bg = "#e3f2fd" # 파란 배경
                     
-                    # 컨테이너 내부에 컬럼 배치 (85% 정보, 15% 버튼)
                     with st.container(border=True):
                         c_info, c_btn = st.columns([0.85, 0.15])
                         
                         with c_info:
-                            # 1열: 기본 정보 (Bold 처리)
                             time_str = ', '.join(course['time_slots']) if course['time_slots'] else "시간미정"
                             info_html = f"""
                             <div style="line-height:1.2;">
@@ -776,7 +786,7 @@ elif st.session_state.current_menu == "📅 스마트 시간표(수정가능)":
                             """
                             st.markdown(info_html, unsafe_allow_html=True)
                             
-                            # 2열: 추천 사유 (Why) - Highlight Tag
+                            # 2열: Fact Reason (Why)
                             if course.get('reason'):
                                 reason_html = f"""
                                 <div style="background-color:{reason_bg}; color:#333; padding:2px 8px; border-radius:4px; font-size:12px; margin-top:4px; display:inline-block;">
@@ -786,7 +796,6 @@ elif st.session_state.current_menu == "📅 스마트 시간표(수정가능)":
                                 st.markdown(reason_html, unsafe_allow_html=True)
 
                         with c_btn:
-                            # 버튼 수직 중앙 정렬 느낌
                             st.write("") 
                             if st.button("➕", key=f"ad_{key_prefix}_{course['id']}", type="primary", help="담기"):
                                 conflict, conflict_name = check_time_conflict(course, st.session_state.my_schedule)
@@ -825,12 +834,10 @@ elif st.session_state.current_menu == "📅 스마트 시간표(수정가능)":
                              st.session_state.my_schedule.pop(idx)
                              st.rerun()
             
-            # 학점 바
             total_credits = sum([c.get('credits', 0) for c in st.session_state.my_schedule])
             st.write(f"**신청 학점:** {total_credits} / 21")
             st.progress(min(total_credits / 21, 1.0))
 
-            # HTML 테이블
             html_table = render_interactive_timetable(st.session_state.my_schedule)
             st.markdown(html_table, unsafe_allow_html=True)
             
