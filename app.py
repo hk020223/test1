@@ -390,49 +390,85 @@ def check_time_conflict(new_course, current_schedule):
             return True, existing['name']
     return False, None
 
-# 2. HTML 시간표 렌더러
+# [수정] 시간표 렌더링 함수 (과목별 알록달록 색상 적용)
 def render_interactive_timetable(schedule_list):
+    """
+    schedule_list에 있는 과목들을 9교시 HTML 테이블로 매핑하여 렌더링
+    (과목명에 따라 고유한 파스텔톤 배경색 적용)
+    """
     days = ["월", "화", "수", "목", "금"]
-    table_grid = {i: {d: "" for d in days} for i in range(1, 10)}
+    
+    # 1. 그리드 초기화 (텍스트와 배경색을 함께 저장하도록 구조 변경)
+    # 기본 배경색은 흰색(#ffffff)
+    table_grid = {i: {d: {"text": "", "bg": "#ffffff"} for d in days} for i in range(1, 10)}
     online_courses = []
 
+    # 2. 예쁜 파스텔톤 색상 팔레트 (8가지)
+    # 핑크, 블루, 그린, 퍼플, 오렌지, 틸, 라벤더, 옐로우
+    palette = [
+        "#FFEBEE", "#E3F2FD", "#E8F5E9", "#F3E5F5", 
+        "#FFF3E0", "#E0F2F1", "#FCE4EC", "#FFF8E1"
+    ]
+
+    # 3. 데이터 채우기
     for course in schedule_list:
         slots = course.get('time_slots', [])
+        
         # 온라인/시간미정 처리
         if not slots or slots == ["시간미정"] or not isinstance(slots, list):
             online_courses.append(course)
             continue
 
+        # [핵심] 과목명에 따라 고정된 색상 배정 (Hash 사용)
+        # 같은 과목은 항상 같은 색으로 나오도록 함
+        color_index = abs(hash(course['name'])) % len(palette)
+        course_bg = palette[color_index]
+
+        # 슬롯 파싱 (예: "월3" -> 요일="월", 교시=3)
         for slot in slots:
             if len(slot) < 2: continue
             day_char = slot[0] # "월"
             try:
                 period = int(slot[1:]) # "3"
                 if day_char in days and 1 <= period <= 9:
+                    # 셀 내용 구성
                     content = f"<b>{course['name']}</b><br><small>{course['professor']}</small>"
-                    table_grid[period][day_char] = content
+                    # 그리드에 텍스트와 계산된 색상 저장
+                    table_grid[period][day_char] = {"text": content, "bg": course_bg}
             except:
-                pass
+                pass 
 
+    # 4. HTML 생성
     html = """
     <table border="1" width="100%" style="border-collapse: collapse; text-align: center; font-size: 12px; border-color: #ddd;">
-        <tr style="background-color: #f8f9fa;">
+        <tr style="background-color: #f8f9fa; color: #333;">
             <th width="10%">교시</th><th width="18%">월</th><th width="18%">화</th><th width="18%">수</th><th width="18%">목</th><th width="18%">금</th>
         </tr>
     """
     
     for i in range(1, 10):
-        html += f"<tr><td style='background-color: #f8f9fa; font-weight:bold;'>{i}</td>"
+        html += f"<tr><td style='background-color: #f8f9fa; font-weight:bold; color: #555;'>{i}</td>"
         for day in days:
-            cell_content = table_grid[i][day]
-            bg_color = "#ffffff" if not cell_content else "#e3f2fd"
+            cell = table_grid[i][day]
+            bg_color = cell['bg']
+            cell_content = cell['text']
+            
+            # 내용이 있으면 테두리와 색상 적용
             border_style = "border: 1px solid #ddd;"
-            html += f"<td style='background-color: {bg_color}; {border_style} height: 45px; vertical-align: middle;'>{cell_content}</td>"
+            
+            html += f"<td style='background-color: {bg_color}; {border_style} height: 45px; vertical-align: middle; color: #333;'>{cell_content}</td>"
         html += "</tr>"
 
+    # 온라인 강의 행 추가
     if online_courses:
-        online_text = ", ".join([f"<b>{c['name']}</b>" for c in online_courses])
-        html += f"<tr><td style='background-color: #f8f9fa;'><b>온라인</b></td><td colspan='5' style='text-align: left; padding: 5px;'>{online_text}</td></tr>"
+        online_items = []
+        for c in online_courses:
+            # 온라인 강의도 색상 적용
+            c_color = palette[abs(hash(c['name'])) % len(palette)]
+            online_items.append(f"<span style='background-color:{c_color}; padding:2px 6px; border-radius:4px;'>{c['name']}</span>")
+        
+        online_text = " ".join(online_items)
+        html += f"<tr><td style='background-color: #f8f9fa;'><b>온라인</b></td><td colspan='5' style='text-align: left; padding: 8px;'>{online_text}</td></tr>"
         
     html += "</table>"
     return html
@@ -1093,6 +1129,7 @@ elif st.session_state.current_menu == "📈 성적 및 진로 진단":
             st.session_state.graduation_analysis_result = ""
             st.session_state.graduation_chat_history = []
             st.rerun()
+
 
 
 
