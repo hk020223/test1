@@ -928,7 +928,28 @@ elif st.session_state.current_menu == "📅 스마트 시간표(수정가능)":
         with col_right:
             st.subheader("🗓️ 내 시간표")
             
-            # [추가] 신청 내역 리스트 (삭제 기능 제공)
+            # [수정] 최대 학점 설정 기능 추가
+            if "max_credits" not in st.session_state:
+                st.session_state.max_credits = 21  # 기본값 21
+            
+            # 학점 현황 및 설정 UI
+            total_credits = sum([c.get('credits', 0) for c in st.session_state.my_schedule])
+            
+            cr_col1, cr_col2 = st.columns([0.6, 0.4])
+            with cr_col1:
+                st.markdown(f"**신청 학점:** <span style='color:#8A1538; font-size:1.2em;'>{total_credits}</span> / {st.session_state.max_credits}", unsafe_allow_html=True)
+            with cr_col2:
+                # 최대 학점 조절 위젯
+                st.session_state.max_credits = st.number_input(
+                    "최대 학점", min_value=1, max_value=30, value=st.session_state.max_credits, step=1, label_visibility="collapsed"
+                )
+
+            # 진행률 표시 (0으로 나누기 방지)
+            if st.session_state.max_credits > 0:
+                progress_val = min(total_credits / st.session_state.max_credits, 1.0)
+                st.progress(progress_val)
+            
+            # [기존 기능] 신청 내역 리스트 (삭제 기능 제공)
             if st.session_state.my_schedule:
                 with st.expander("📋 신청 내역 관리 (클릭하여 삭제)", expanded=True):
                     for idx, added_course in enumerate(st.session_state.my_schedule):
@@ -938,10 +959,6 @@ elif st.session_state.current_menu == "📅 스마트 시간표(수정가능)":
                              st.session_state.my_schedule.pop(idx)
                              st.rerun()
             
-            total_credits = sum([c.get('credits', 0) for c in st.session_state.my_schedule])
-            st.write(f"**신청 학점:** {total_credits} / 21")
-            st.progress(min(total_credits / 21, 1.0))
-
             html_table = render_interactive_timetable(st.session_state.my_schedule)
             st.markdown(html_table, unsafe_allow_html=True)
             
@@ -977,7 +994,6 @@ elif st.session_state.current_menu == "📅 스마트 시간표(수정가능)":
             if st.button("🔄 비우기"):
                 st.session_state.my_schedule = []
                 st.rerun()
-
 elif st.session_state.current_menu == "📈 성적 및 진로 진단":
     st.subheader("📈 성적 및 진로 정밀 진단")
     st.markdown("""
@@ -1077,5 +1093,6 @@ elif st.session_state.current_menu == "📈 성적 및 진로 진단":
             st.session_state.graduation_analysis_result = ""
             st.session_state.graduation_chat_history = []
             st.rerun()
+
 
 
