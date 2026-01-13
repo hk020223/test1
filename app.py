@@ -6,7 +6,7 @@ import datetime
 import time
 import base64
 import re  # 정규표현식 사용
-import json # JSON 처리를 위한 라이브러리 추가
+import json # JSON 처리를 위한 라이브러리
 from langchain_community.document_loaders import PyPDFLoader
 from langchain_google_genai import ChatGoogleGenerativeAI
 from langchain_core.prompts import PromptTemplate
@@ -21,10 +21,11 @@ from firebase_admin import credentials, firestore
 # -----------------------------------------------------------------------------
 st.set_page_config(page_title="KW-강의마스터 Pro", page_icon="🎓", layout="wide")
 
-# [모바일 최적화 CSS]
+# [모바일 최적화 CSS 및 컴팩트 뷰 스타일링]
 st.markdown("""
     <style>
         footer { visibility: hidden; }
+        /* 모바일 최적화 */
         @media only screen and (max-width: 600px) {
             .main .block-container {
                 padding-left: 0.2rem !important;
@@ -32,31 +33,29 @@ st.markdown("""
                 padding-top: 2rem !important;
                 max-width: 100% !important;
             }
-            div[data-testid="stMarkdownContainer"] table {
-                width: 100% !important;
-                table-layout: fixed !important;
-                display: table !important;
-                font-size: 10px !important;
-                margin-bottom: 0px !important;
-            }
-            div[data-testid="stMarkdownContainer"] th, 
-            div[data-testid="stMarkdownContainer"] td {
-                padding: 1px 1px !important;
-                word-wrap: break-word !important;
-                word-break: break-all !important;
-                white-space: normal !important;
-                line-height: 1.1 !important;
-                vertical-align: middle !important;
-            }
-            div[data-testid="stMarkdownContainer"] th:first-child,
-            div[data-testid="stMarkdownContainer"] td:first-child {
-                width: 35px !important;
-                font-size: 8px !important;
-                text-align: center !important;
-                letter-spacing: -0.5px !important;
-            }
-            button { min-height: 45px !important; }
-            input { font-size: 16px !important; }
+        }
+        /* 시간표 테이블 스타일 */
+        div[data-testid="stMarkdownContainer"] table {
+            width: 100% !important;
+            table-layout: fixed !important;
+            display: table !important;
+            font-size: 11px !important;
+            margin-bottom: 0px !important;
+        }
+        div[data-testid="stMarkdownContainer"] th, 
+        div[data-testid="stMarkdownContainer"] td {
+            padding: 2px !important;
+            word-wrap: break-word !important;
+            word-break: break-all !important;
+            white-space: normal !important;
+            line-height: 1.2 !important;
+            vertical-align: middle !important;
+        }
+        /* 버튼 높이 조정 */
+        button[kind="primary"], button[kind="secondary"] {
+            padding: 0.2rem 0.5rem !important;
+            min-height: 0px !important;
+            height: auto !important;
         }
     </style>
 """, unsafe_allow_html=True)
@@ -291,87 +290,72 @@ def ask_ai(question):
         return f"❌ AI 오류: {str(e)}"
 
 # =============================================================================
-# [추가] 인터랙티브 시간표 빌더를 위한 Helper 함수들 (Python Logic)
+# [Helper Functions] 인터랙티브 시간표 & AI 추천 (Compact View & Reason)
 # =============================================================================
 
-# 1. 시간 충돌 감지 로직 (AI 사용 X, 즉시 계산)
+# 1. 시간 충돌 감지 로직
 def check_time_conflict(new_course, current_schedule):
-    """
-    new_course: {'name': '..', 'time_slots': ['월1', '월2']}
-    current_schedule: [{'name': '..', 'time_slots': [...]}, ...]
-    return: (Bool, 충돌된 과목명)
-    """
     new_slots = set(new_course.get('time_slots', []))
-    
     for existing in current_schedule:
         existing_slots = set(existing.get('time_slots', []))
         overlap = new_slots & existing_slots
         if overlap:
             return True, existing['name']
-    
     return False, None
 
-# 2. HTML 시간표 렌더러 (Python에서 직접 그리기)
+# 2. HTML 시간표 렌더러
 def render_interactive_timetable(schedule_list):
-    """
-    schedule_list에 있는 과목들을 9교시 HTML 테이블로 매핑하여 렌더링
-    """
     days = ["월", "화", "수", "목", "금"]
-    # 9교시 x 5요일 빈 테이블 생성
     table_grid = {i: {d: "" for d in days} for i in range(1, 10)}
     online_courses = []
 
-    # 데이터 채우기
     for course in schedule_list:
         slots = course.get('time_slots', [])
-        
         # 온라인/시간미정 처리
         if not slots or slots == ["시간미정"] or not isinstance(slots, list):
             online_courses.append(course)
             continue
 
-        # 슬롯 파싱 (예: "월3" -> 요일="월", 교시=3)
         for slot in slots:
             if len(slot) < 2: continue
             day_char = slot[0] # "월"
             try:
                 period = int(slot[1:]) # "3"
                 if day_char in days and 1 <= period <= 9:
-                    # 셀 내용 구성 (과목명 + 교수명)
                     content = f"<b>{course['name']}</b><br><small>{course['professor']}</small>"
                     table_grid[period][day_char] = content
             except:
-                pass # 파싱 에러 시 무시
+                pass
 
-    # HTML 생성
     html = """
-    <table border="1" width="100%" style="border-collapse: collapse; text-align: center; font-size: 12px;">
-        <tr style="background-color: #f2f2f2;">
+    <table border="1" width="100%" style="border-collapse: collapse; text-align: center; font-size: 12px; border-color: #ddd;">
+        <tr style="background-color: #f8f9fa;">
             <th width="10%">교시</th><th width="18%">월</th><th width="18%">화</th><th width="18%">수</th><th width="18%">목</th><th width="18%">금</th>
         </tr>
     """
     
     for i in range(1, 10):
-        html += f"<tr><td style='background-color: #f9f9f9;'><b>{i}교시</b></td>"
+        html += f"<tr><td style='background-color: #f8f9fa; font-weight:bold;'>{i}</td>"
         for day in days:
             cell_content = table_grid[i][day]
-            bg_color = "#ffffff" if not cell_content else "#e3f2fd" # 수업 있으면 파란 배경
-            html += f"<td style='background-color: {bg_color}; height: 50px; vertical-align: middle;'>{cell_content}</td>"
+            bg_color = "#ffffff" if not cell_content else "#e3f2fd"
+            border_style = "border: 1px solid #ddd;"
+            html += f"<td style='background-color: {bg_color}; {border_style} height: 45px; vertical-align: middle;'>{cell_content}</td>"
         html += "</tr>"
 
-    # 온라인 강의 행 추가
     if online_courses:
         online_text = ", ".join([f"<b>{c['name']}</b>" for c in online_courses])
-        html += f"<tr><td style='background-color: #f9f9f9;'><b>온라인/기타</b></td><td colspan='5' style='text-align: left; padding: 5px;'>{online_text}</td></tr>"
+        html += f"<tr><td style='background-color: #f8f9fa;'><b>온라인</b></td><td colspan='5' style='text-align: left; padding: 5px;'>{online_text}</td></tr>"
         
     html += "</table>"
     return html
 
-# 3. AI 후보군 추출 함수 (재수강 정보 핀포인트 반영 + JSON 출력)
+# 3. AI 후보군 추출 (Reason 포함)
 def get_course_candidates_json(major, grade, semester, diagnosis_text=""):
     llm = get_llm()
     if not llm: return []
 
+    # [수정] reason 필드 추가 및 구체적 작성 지시
     prompt_template = """
     너는 대학교 수강신청 데이터 추출기야. 
     제공된 [문서]와 [진단결과]를 바탕으로, 해당 학년/학기에 수강 가능한 **모든 강의 리스트**를 JSON 포맷으로 추출해.
@@ -380,40 +364,32 @@ def get_course_candidates_json(major, grade, semester, diagnosis_text=""):
     - 전공: {major}
     - 대상: {grade} {semester}
     
-    [진단 결과 (재수강 정보만 반영)]
+    [진단 결과 (재수강/추천 정보)]
     {diagnosis_context}
     
     [지시사항]
-    1. **재수강 필수 여부 판단:** 위 [진단 결과] 텍스트에서 '재수강'이나 'F학점', '미이수'로 언급된 과목이 있다면 `priority` 값을 "High"로, `tag`에 "재수강필수"를 넣어줘.
-    2. **데이터 정규화 (매우 중요):**
-       - `time_slots`: 반드시 **["월1", "월2", "수3"]** 와 같이 "요일+교시" 형태의 리스트로 변환해. (예: "월요일 1,2교시" -> ["월1", "월2"])
-       - 시간이 없거나 온라인이면 빈 리스트 `[]` 또는 `["시간미정"]`으로 처리.
-    3. **출력 포맷:** 오직 **JSON 리스트만** 출력해. 마크다운(```json)이나 사족 붙이지 마.
+    1. **재수강/추천 사유(reason) 작성:** [진단 결과]를 분석하여 **"왜 이 과목을 들어야 하는지"** 한 문장으로 작성해.
+       - 예: "지난 학기 F학점으로 재수강 필수", "삼성전자 회로 직무 우대 과목", "졸업 필수 요건 충족"
+    2. **우선순위(priority):** - 재수강이거나 졸업필수면 "High"
+       - 직무 추천이면 "Medium"
+       - 나머지는 "Normal"
+    3. **데이터 정규화:** `time_slots`는 반드시 ["월1", "수2"] 형태.
     
-    [JSON 예시]
+    [JSON 출력 포맷 예시]
     [
         {{
-            "id": "c1",
-            "name": "회로이론1",
-            "professor": "김광운",
+            "id": "unique_id",
+            "name": "과목명",
+            "professor": "교수명",
             "credits": 3,
             "time_slots": ["월3", "수4"],
             "classification": "전공필수",
             "priority": "High", 
-            "tag": "재수강필수"
-        }},
-        {{
-            "id": "c2",
-            "name": "대학영어",
-            "professor": "원어민",
-            "credits": 2,
-            "time_slots": ["화1", "목1"],
-            "classification": "교양필수",
-            "priority": "Normal",
-            "tag": ""
+            "reason": "직전 학기 F학점으로 인한 재수강 필수"
         }}
     ]
-
+    
+    **오직 JSON 리스트만 출력해.**
     [문서 데이터]
     {context}
     """
@@ -430,7 +406,6 @@ def get_course_candidates_json(major, grade, semester, diagnosis_text=""):
 
     try:
         response = run_with_retry(_execute)
-        # JSON 파싱 시도 (AI가 가끔 ```json 등을 붙일 수 있으므로 제거)
         cleaned_json = response.replace("```json", "").replace("```", "").strip()
         if not cleaned_json.startswith("["):
              start = cleaned_json.find("[")
@@ -610,7 +585,6 @@ with st.sidebar:
                             else:
                                 user, err = fb_manager.signup(email, password)
                             
-                            # [로그인 성공 시] clear() 호출 안 함 -> 화면 상태 유지
                             if user:
                                 st.session_state.user = user
                                 st.success(f"환영합니다! ({user['email']})")
@@ -619,35 +593,27 @@ with st.sidebar:
                                 st.error(f"오류: {err}")
     else:
         st.info(f"👤 **{st.session_state.user['email']}**님")
-        # [로그아웃 시] clear() 호출 -> 화면/데이터 완전 초기화
         if st.button("로그아웃"):
             st.session_state.clear()
             st.session_state["menu_radio"] = "🤖 AI 학사 지식인" 
             st.rerun()
-    # [사이드바 맨 아래 수정] 관리자 도구 - 자동 업데이트 시뮬레이션
+    
     st.divider()
     st.subheader("⚙️ 시스템 관리자 모드")
     
     if st.button("📡 학교 서버 데이터 동기화 (Auto-Sync)"):
         status_text = st.empty()
         progress_bar = st.progress(0)
-        
-        # 1. 서버 접속 시뮬레이션
         status_text.text("🔄 광운대 KLAS 서버 접속 중...")
         time.sleep(1.0) 
         progress_bar.progress(30)
-        
-        # 2. 데이터 변경 감지 시뮬레이션
         status_text.text("📂 최신 학사 규정 및 시간표 스캔 중... (변경 감지!)")
         time.sleep(1.5)
         progress_bar.progress(70)
-        
-        # 3. 다운로드 및 DB 갱신 (실제 동작: 캐시 초기화)
         status_text.text("⬇️ 신규 PDF 다운로드 및 벡터 DB 재구축 중...")
-        st.cache_resource.clear() # 실제로는 여기서 로컬 파일을 다시 읽어옵니다.
+        st.cache_resource.clear()
         time.sleep(1.0)
         progress_bar.progress(100)
-        
         st.success("✅ 동기화 완료! 최신 데이터(2026-01-12 14:30 기준)가 반영되었습니다.")
         time.sleep(2)
         st.rerun()         
@@ -718,16 +684,14 @@ elif st.session_state.current_menu == "📅 스마트 시간표(수정가능)":
     
     # [상태 초기화]
     if "candidate_courses" not in st.session_state:
-        st.session_state.candidate_courses = [] # AI가 가져온 강의 목록
+        st.session_state.candidate_courses = []
     if "my_schedule" not in st.session_state:
-        st.session_state.my_schedule = [] # 내가 담은 장바구니
+        st.session_state.my_schedule = []
 
     # --------------------------------------------------------------------------
-    # [A] 설정 및 후보군 로딩 섹션
+    # [A] 설정 및 후보군 로딩
     # --------------------------------------------------------------------------
-    # 후보군이 없으면 설정창을 열어둠
     with st.expander("🛠️ 수강신청 설정 (학과/학년 선택)", expanded=not bool(st.session_state.candidate_courses)):
-        # 학과 리스트 정의 (기존 리스트 활용)
         kw_departments = [
             "전자공학과", "전자통신공학과", "전자융합공학과", "전기공학과", "전자재료공학과", "반도체시스템공학부", "로봇학부",
             "컴퓨터정보공학부", "소프트웨어학부", "정보융합학부", "지능형로봇학과", "건축학과", "건축공학과", "화학공학과", "환경공학과",
@@ -741,121 +705,131 @@ elif st.session_state.current_menu == "📅 스마트 시간표(수정가능)":
         grade = c2.selectbox("학년", ["1학년", "2학년", "3학년", "4학년"], key="tt_grade")
         semester = c3.selectbox("학기", ["1학기", "2학기"], key="tt_semester")
         
-        # [재수강 정보만 핀포인트 반영]
-        use_diagnosis = st.checkbox("☑️ 성적 진단 결과 반영 (재수강 과목 우선 추천)", value=True)
+        use_diagnosis = st.checkbox("☑️ 성적 진단 결과 반영 (재수강/추천 과목 로드)", value=True)
         
         if st.button("🚀 강의 목록 불러오기 (AI Scan)", type="primary", use_container_width=True):
             diag_text = ""
-            # 진단 결과에서 정보가 있을 경우 전달
             if use_diagnosis and st.session_state.graduation_analysis_result:
                  diag_text = st.session_state.graduation_analysis_result
-            # 저장된 진단결과가 없어도 DB에서 자동 로드 시도
             elif use_diagnosis and st.session_state.user and fb_manager.is_initialized:
                  saved_diags = fb_manager.load_collection('graduation_diagnosis')
                  if saved_diags:
                      diag_text = saved_diags[0]['result']
                      st.toast("저장된 진단 결과를 불러왔습니다.")
 
-            with st.spinner("요람과 진단 결과를 분석해 수강 가능 목록을 추출 중입니다..."):
+            with st.spinner("요람과 진단 결과를 분석해 추천 사유(Reason)가 포함된 강의 목록을 추출 중입니다..."):
                 candidates = get_course_candidates_json(major, grade, semester, diag_text)
                 if candidates:
                     st.session_state.candidate_courses = candidates
-                    st.session_state.my_schedule = [] # 새 검색 시 초기화
+                    st.session_state.my_schedule = [] 
                     st.rerun()
                 else:
                     st.error("강의 정보를 추출하지 못했습니다. 다시 시도해주세요.")
 
     # --------------------------------------------------------------------------
-    # [B] 인터랙티브 빌더 UI (2단 컬럼: 좌측 마켓 / 우측 프리뷰)
+    # [B] 인터랙티브 빌더 UI (인사이트 컴팩트 뷰 적용)
     # --------------------------------------------------------------------------
     if st.session_state.candidate_courses:
         st.divider()
         col_left, col_right = st.columns([1, 1.4], gap="medium")
 
-        # [좌측] 강의 장바구니 (Market)
+        # [좌측] 강의 장바구니
         with col_left:
             st.subheader("📚 강의 선택")
-            st.caption("버튼을 눌러 시간표에 추가하세요. (실시간 충돌 감지)")
+            st.caption("AI의 추천 사유를 확인하고 담아보세요.")
             
-            # 카테고리별 분류 탭
             tab1, tab2, tab3 = st.tabs(["🔥 필수/재수강", "🏫 전공선택", "🧩 교양/기타"])
             
-            def draw_course_card(course, key_prefix):
-                # 이미 담은 강의인지 확인
+            # [UI 컴포넌트] 인사이트 컴팩트 로우 (Insight Compact Row)
+            def draw_course_row(course, key_prefix):
                 is_added = any(c['id'] == course['id'] for c in st.session_state.my_schedule)
                 
-                # 카드 스타일링
-                card_border = True
-                icon = "📘"
-                # 재수강/필수 강조
-                if course.get('priority') == 'High':
-                    icon = "🚨"
+                # Highlight Logic
+                priority = course.get('priority', 'Normal')
+                bg_color = "#ffffff"
+                border_color = "#ddd"
+                reason_bg = "#f1f3f5" # 기본 회색
                 
-                with st.container(border=card_border):
-                    c_title, c_btn = st.columns([3.5, 1])
-                    c_title.markdown(f"**{icon} {course['name']}** <small>({course['credits']}학점)</small>", unsafe_allow_html=True)
+                if priority == 'High': 
+                    border_color = "#ffcccc" # 붉은 테두리
+                    reason_bg = "#ffebee" # 붉은 배경 (이유)
+                elif priority == 'Medium':
+                    border_color = "#cce5ff" # 파란 테두리
+                    reason_bg = "#e3f2fd" # 파란 배경
+                
+                # 컨테이너 내부에 컬럼 배치 (85% 정보, 15% 버튼)
+                with st.container(border=True):
+                    c_info, c_btn = st.columns([0.85, 0.15])
                     
-                    time_str = ', '.join(course['time_slots']) if course['time_slots'] else "시간미정"
-                    c_title.caption(f"{course['professor']} | {time_str}")
-                    
-                    # 태그 표시
-                    if course.get('tag'):
-                        st.markdown(f"<span style='background-color:#ffcccc; padding:2px 6px; border-radius:4px; font-size:10px; color:black;'>{course['tag']}</span>", unsafe_allow_html=True)
+                    with c_info:
+                        # 1열: 기본 정보 (Bold 처리)
+                        time_str = ', '.join(course['time_slots']) if course['time_slots'] else "시간미정"
+                        info_html = f"""
+                        <div style="line-height:1.2;">
+                            <span style="font-weight:bold; font-size:16px;">{course['name']}</span> 
+                            <span style="font-size:13px; color:#555;">({course['credits']}학점) | {course['professor']} | {time_str}</span>
+                        </div>
+                        """
+                        st.markdown(info_html, unsafe_allow_html=True)
+                        
+                        # 2열: 추천 사유 (Why) - Highlight Tag
+                        if course.get('reason'):
+                            reason_html = f"""
+                            <div style="background-color:{reason_bg}; color:#333; padding:2px 8px; border-radius:4px; font-size:12px; margin-top:4px; display:inline-block;">
+                                💡 {course['reason']}
+                            </div>
+                            """
+                            st.markdown(reason_html, unsafe_allow_html=True)
 
-                    if is_added:
-                        if c_btn.button("빼기", key=f"remove_{key_prefix}_{course['id']}", type="secondary"):
-                            st.session_state.my_schedule = [c for c in st.session_state.my_schedule if c['id'] != course['id']]
-                            st.rerun()
-                    else:
-                        if c_btn.button("담기", key=f"add_{key_prefix}_{course['id']}", type="primary"):
-                            # [Python Logic] 충돌 검사
-                            conflict, conflict_name = check_time_conflict(course, st.session_state.my_schedule)
-                            if conflict:
-                                st.toast(f"⚠️ 시간 충돌! '{conflict_name}' 수업과 겹칩니다.", icon="🚫")
-                            else:
-                                st.session_state.my_schedule.append(course)
+                    with c_btn:
+                        # 버튼 수직 중앙 정렬 느낌을 위해 빈 공간 추가 (선택사항)
+                        st.write("") 
+                        if is_added:
+                            if st.button("➖", key=f"rm_{key_prefix}_{course['id']}", help="빼기"):
+                                st.session_state.my_schedule = [c for c in st.session_state.my_schedule if c['id'] != course['id']]
                                 st.rerun()
+                        else:
+                            if st.button("➕", key=f"ad_{key_prefix}_{course['id']}", type="primary", help="담기"):
+                                conflict, conflict_name = check_time_conflict(course, st.session_state.my_schedule)
+                                if conflict:
+                                    st.toast(f"⚠️ 시간 충돌! '{conflict_name}' 수업과 겹칩니다.", icon="🚫")
+                                else:
+                                    st.session_state.my_schedule.append(course)
+                                    st.rerun()
 
-            # 분류 로직
-            must_list = [c for c in st.session_state.candidate_courses if c.get('priority') == 'High' or '필수' in c.get('classification', '')]
-            major_sel_list = [c for c in st.session_state.candidate_courses if '전공' in c.get('classification', '') and c not in must_list]
-            other_list = [c for c in st.session_state.candidate_courses if c not in must_list and c not in major_sel_list]
+            # 분류 및 렌더링
+            must_list = [c for c in st.session_state.candidate_courses if c.get('priority') == 'High']
+            major_list = [c for c in st.session_state.candidate_courses if c.get('priority') == 'Medium' or ('전공' in c.get('classification', '') and c not in must_list)]
+            other_list = [c for c in st.session_state.candidate_courses if c not in must_list and c not in major_list]
 
             with tab1:
-                if not must_list: st.info("추천 필수 과목이 없습니다.")
-                for c in must_list: draw_course_card(c, "must")
+                if not must_list: st.info("해당 과목 없음")
+                for c in must_list: draw_course_row(c, "must")
             with tab2:
-                if not major_sel_list: st.info("전공 선택 과목이 없습니다.")
-                for c in major_sel_list: draw_course_card(c, "major")
+                if not major_list: st.info("해당 과목 없음")
+                for c in major_list: draw_course_row(c, "mj")
             with tab3:
-                if not other_list: st.info("기타 과목이 없습니다.")
-                for c in other_list: draw_course_card(c, "other")
+                if not other_list: st.info("해당 과목 없음")
+                for c in other_list: draw_course_row(c, "ot")
 
-        # [우측] 실시간 프리뷰 (Preview)
+        # [우측] 실시간 프리뷰
         with col_right:
-            st.subheader("🗓️ 내 시간표 프리뷰")
+            st.subheader("🗓️ 내 시간표")
             
-            # 학점 계산기
             total_credits = sum([c.get('credits', 0) for c in st.session_state.my_schedule])
-            st.write(f"**신청 학점:** {total_credits} / 21 학점")
+            st.write(f"**신청 학점:** {total_credits} / 21")
             st.progress(min(total_credits / 21, 1.0))
 
-            # HTML 렌더링 (Python 함수 호출)
-            # 빈 리스트여도 테이블 틀은 보여줌
             html_table = render_interactive_timetable(st.session_state.my_schedule)
             st.markdown(html_table, unsafe_allow_html=True)
             
             st.divider()
             
-            # [저장 기능]
-            if st.button("💾 이대로 시간표 저장하기", use_container_width=True):
+            if st.button("💾 이대로 저장하기", use_container_width=True):
                 if not st.session_state.my_schedule:
-                    st.error("저장할 과목이 없습니다.")
+                    st.error("과목을 선택해주세요.")
                 else:
-                    # result에 HTML 코드를 저장 (기존 뷰어 호환)
                     st.session_state.timetable_result = html_table 
-                    
-                    # Firebase 저장 로직
                     doc_data = {
                         "result": html_table,
                         "major": major,
@@ -864,11 +838,9 @@ elif st.session_state.current_menu == "📅 스마트 시간표(수정가능)":
                         "is_favorite": False,
                         "created_at": datetime.datetime.now()
                     }
-                    
                     if st.session_state.user and fb_manager.is_initialized:
                          doc_id = str(int(time.time()))
                          if fb_manager.save_data('timetables', doc_id, doc_data):
-                             # 메타데이터 업데이트
                              st.session_state.current_timetable_meta = {
                                 "id": doc_id, "name": doc_data['name'], "is_favorite": False
                              }
@@ -878,10 +850,9 @@ elif st.session_state.current_menu == "📅 스마트 시간표(수정가능)":
                          else:
                              st.error("저장 실패")
                     else:
-                        st.warning("로그인 후 저장 가능합니다.")
+                        st.warning("로그인 필요")
             
-            # [초기화 버튼]
-            if st.button("🔄 초기화 (다시 비우기)"):
+            if st.button("🔄 비우기"):
                 st.session_state.my_schedule = []
                 st.rerun()
 
@@ -889,7 +860,6 @@ elif st.session_state.current_menu == "📈 성적 및 진로 진단":
     st.subheader("📈 성적 및 진로 정밀 진단")
     st.markdown("""
     **취득 학점 내역을 캡처해서 업로드하세요!** AI 취업 컨설턴트가 당신의 성적표를 냉철하게 분석하여 **졸업 요건**, **성적 상태**, **커리어 방향성**을 진단해 드립니다.
-    - KLAS 또는 학교 포털의 성적/학점 조회 화면을 캡처해주세요.
     """)
 
     if st.session_state.user and fb_manager.is_initialized:
@@ -917,24 +887,19 @@ elif st.session_state.current_menu == "📈 성적 및 진로 진단":
 
     if st.session_state.graduation_analysis_result:
         st.divider()
-        
         result_text = st.session_state.graduation_analysis_result
         
         # 섹션 파싱
         sec_grad = ""
         sec_grade = ""
         sec_career = ""
-        
         try:
             if "[[SECTION:GRADUATION]]" in result_text:
                 parts = result_text.split("[[[SECTION:GRADUATION]]")
                 if len(parts) > 1:
                     temp = parts[1]
                 else:
-                    # [[SECTION:GRADUATION]] 태그가 맨 앞에 있거나 split이 제대로 안된 경우
-                    # 혹시 모르니 그냥 result_text에서 찾기 시도
                     temp = result_text.split("[[SECTION:GRADUATION]]")[-1]
-
                 if "[[SECTION:GRADES]]" in temp:
                     sec_grad, remaining = temp.split("[[SECTION:GRADES]]")
                     if "[[SECTION:CAREER]]" in remaining:
@@ -949,16 +914,11 @@ elif st.session_state.current_menu == "📈 성적 및 진로 진단":
             sec_grad = result_text
 
         tab1, tab2, tab3 = st.tabs(["🎓 졸업 요건 확인", "📊 성적 정밀 분석", "💼 AI 커리어 솔루션"])
-        
-        with tab1:
-            st.markdown(sec_grad)
-        with tab2:
-            st.markdown(sec_grade if sec_grade else "성적 분석 결과가 없습니다.")
-        with tab3:
-            st.markdown(sec_career if sec_career else "커리어 솔루션 결과가 없습니다.")
+        with tab1: st.markdown(sec_grad)
+        with tab2: st.markdown(sec_grade if sec_grade else "성적 분석 결과가 없습니다.")
+        with tab3: st.markdown(sec_career if sec_career else "커리어 솔루션 결과가 없습니다.")
         
         st.divider()
-
         if st.session_state.user and fb_manager.is_initialized:
             if st.button("☁️ 진단 결과 저장하기"):
                 doc_data = {
@@ -970,8 +930,6 @@ elif st.session_state.current_menu == "📈 성적 및 진로 진단":
                     st.toast("진단 결과가 저장되었습니다!", icon="✅")
         
         st.subheader("💬 컨설턴트와의 대화")
-        st.caption("결과에 대해 추가 질문을 하거나, 누락된 정보를 알려주세요.")
-
         for msg in st.session_state.graduation_chat_history:
             with st.chat_message(msg["role"]):
                 st.markdown(msg["content"])
@@ -981,15 +939,13 @@ elif st.session_state.current_menu == "📈 성적 및 진로 진단":
             add_log("user", f"[진단상담] {chat_input}", "📈 성적 및 진로 진단")
             with st.chat_message("user"):
                 st.write(chat_input)
-            
             with st.chat_message("assistant"):
                 with st.spinner("분석 중..."):
                     response = chat_with_graduation_ai(st.session_state.graduation_analysis_result, chat_input)
                     if "[수정]" in response:
                         new_result = response.replace("[수정]", "").strip()
                         st.session_state.graduation_analysis_result = new_result
-                        success_msg = "정보를 반영하여 진단 결과를 업데이트했습니다. 위쪽 탭을 다시 확인해주세요."
-                        st.session_state.graduation_chat_history.append({"role": "assistant", "content": success_msg})
+                        st.session_state.graduation_chat_history.append({"role": "assistant", "content": "정보를 반영하여 업데이트했습니다."})
                         st.rerun()
                     else:
                         st.markdown(response)
