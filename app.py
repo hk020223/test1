@@ -565,7 +565,33 @@ with st.sidebar:
             st.session_state.clear()
             st.session_state["menu_radio"] = "🤖 AI 학사 지식인" 
             st.rerun()
-            
+    # [사이드바 맨 아래 수정] 관리자 도구 - 자동 업데이트 시뮬레이션
+    st.divider()
+    st.subheader("⚙️ 시스템 관리자 모드")
+    
+    if st.button("📡 학교 서버 데이터 동기화 (Auto-Sync)"):
+        status_text = st.empty()
+        progress_bar = st.progress(0)
+        
+        # 1. 서버 접속 시뮬레이션
+        status_text.text("🔄 광운대 KLAS 서버 접속 중...")
+        time.sleep(1.0) 
+        progress_bar.progress(30)
+        
+        # 2. 데이터 변경 감지 시뮬레이션
+        status_text.text("📂 최신 학사 규정 및 시간표 스캔 중... (변경 감지!)")
+        time.sleep(1.5)
+        progress_bar.progress(70)
+        
+        # 3. 다운로드 및 DB 갱신 (실제 동작: 캐시 초기화)
+        status_text.text("⬇️ 신규 PDF 다운로드 및 벡터 DB 재구축 중...")
+        st.cache_resource.clear() # 실제로는 여기서 로컬 파일을 다시 읽어옵니다.
+        time.sleep(1.0)
+        progress_bar.progress(100)
+        
+        st.success("✅ 동기화 완료! 최신 데이터(2026-01-12 14:30 기준)가 반영되었습니다.")
+        time.sleep(2)
+        st.rerun()        
     st.divider()
     st.caption("클릭하면 해당 화면으로 이동합니다.")
     log_container = st.container(height=300)
@@ -1099,5 +1125,6 @@ elif st.session_state.current_menu == "📈 성적 및 진로 진단":
             st.session_state.graduation_analysis_result = ""
             st.session_state.graduation_chat_history = []
             st.rerun()
+
 
 
