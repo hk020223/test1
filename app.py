@@ -733,62 +733,61 @@ elif st.session_state.current_menu == "📅 스마트 시간표(수정가능)":
         st.divider()
         col_left, col_right = st.columns([1, 1.4], gap="medium")
 
-        # [좌측] 강의 장바구니
+        # [좌측] 강의 장바구니 (스크롤 박스 적용 및 자동 숨김)
         with col_left:
             st.subheader("📚 강의 선택")
-            st.caption("AI의 추천 사유를 확인하고 담아보세요.")
+            st.caption("담은 과목은 목록에서 자동으로 사라집니다.")
             
-            tab1, tab2, tab3 = st.tabs(["🔥 필수/재수강", "🏫 전공선택", "🧩 교양/기타"])
-            
-            # [UI 컴포넌트] 인사이트 컴팩트 로우 (Insight Compact Row)
-            def draw_course_row(course, key_prefix):
-                is_added = any(c['id'] == course['id'] for c in st.session_state.my_schedule)
+            # [수정] 스크롤 컨테이너 적용 (높이 600px)
+            with st.container(height=600, border=True):
+                tab1, tab2, tab3 = st.tabs(["🔥 필수/재수강", "🏫 전공선택", "🧩 교양/기타"])
                 
-                # Highlight Logic
-                priority = course.get('priority', 'Normal')
-                bg_color = "#ffffff"
-                border_color = "#ddd"
-                reason_bg = "#f1f3f5" # 기본 회색
-                
-                if priority == 'High': 
-                    border_color = "#ffcccc" # 붉은 테두리
-                    reason_bg = "#ffebee" # 붉은 배경 (이유)
-                elif priority == 'Medium':
-                    border_color = "#cce5ff" # 파란 테두리
-                    reason_bg = "#e3f2fd" # 파란 배경
-                
-                # 컨테이너 내부에 컬럼 배치 (85% 정보, 15% 버튼)
-                with st.container(border=True):
-                    c_info, c_btn = st.columns([0.85, 0.15])
+                # [UI 컴포넌트] 인사이트 컴팩트 로우 (Insight Compact Row)
+                def draw_course_row(course, key_prefix):
+                    # [필터 로직] 이미 담은 과목은 목록에서 그리지 않음 (자동 숨김)
+                    current_names = [c['name'] for c in st.session_state.my_schedule]
+                    if course['name'] in current_names:
+                        return # Skip rendering
+
+                    # Highlight Logic
+                    priority = course.get('priority', 'Normal')
+                    border_color = "#ddd"
+                    reason_bg = "#f1f3f5" # 기본 회색
                     
-                    with c_info:
-                        # 1열: 기본 정보 (Bold 처리)
-                        time_str = ', '.join(course['time_slots']) if course['time_slots'] else "시간미정"
-                        info_html = f"""
-                        <div style="line-height:1.2;">
-                            <span style="font-weight:bold; font-size:16px;">{course['name']}</span> 
-                            <span style="font-size:13px; color:#555;">({course['credits']}학점) | {course['professor']} | {time_str}</span>
-                        </div>
-                        """
-                        st.markdown(info_html, unsafe_allow_html=True)
+                    if priority == 'High': 
+                        border_color = "#ffcccc" # 붉은 테두리
+                        reason_bg = "#ffebee" # 붉은 배경 (이유)
+                    elif priority == 'Medium':
+                        border_color = "#cce5ff" # 파란 테두리
+                        reason_bg = "#e3f2fd" # 파란 배경
+                    
+                    # 컨테이너 내부에 컬럼 배치 (85% 정보, 15% 버튼)
+                    with st.container(border=True):
+                        c_info, c_btn = st.columns([0.85, 0.15])
                         
-                        # 2열: 추천 사유 (Why) - Highlight Tag
-                        if course.get('reason'):
-                            reason_html = f"""
-                            <div style="background-color:{reason_bg}; color:#333; padding:2px 8px; border-radius:4px; font-size:12px; margin-top:4px; display:inline-block;">
-                                💡 {course['reason']}
+                        with c_info:
+                            # 1열: 기본 정보 (Bold 처리)
+                            time_str = ', '.join(course['time_slots']) if course['time_slots'] else "시간미정"
+                            info_html = f"""
+                            <div style="line-height:1.2;">
+                                <span style="font-weight:bold; font-size:16px;">{course['name']}</span> 
+                                <span style="font-size:13px; color:#555;">({course['credits']}학점) | {course['professor']} | {time_str}</span>
                             </div>
                             """
-                            st.markdown(reason_html, unsafe_allow_html=True)
+                            st.markdown(info_html, unsafe_allow_html=True)
+                            
+                            # 2열: 추천 사유 (Why) - Highlight Tag
+                            if course.get('reason'):
+                                reason_html = f"""
+                                <div style="background-color:{reason_bg}; color:#333; padding:2px 8px; border-radius:4px; font-size:12px; margin-top:4px; display:inline-block;">
+                                    💡 {course['reason']}
+                                </div>
+                                """
+                                st.markdown(reason_html, unsafe_allow_html=True)
 
-                    with c_btn:
-                        # 버튼 수직 중앙 정렬 느낌을 위해 빈 공간 추가 (선택사항)
-                        st.write("") 
-                        if is_added:
-                            if st.button("➖", key=f"rm_{key_prefix}_{course['id']}", help="빼기"):
-                                st.session_state.my_schedule = [c for c in st.session_state.my_schedule if c['id'] != course['id']]
-                                st.rerun()
-                        else:
+                        with c_btn:
+                            # 버튼 수직 중앙 정렬 느낌
+                            st.write("") 
                             if st.button("➕", key=f"ad_{key_prefix}_{course['id']}", type="primary", help="담기"):
                                 conflict, conflict_name = check_time_conflict(course, st.session_state.my_schedule)
                                 if conflict:
@@ -797,29 +796,41 @@ elif st.session_state.current_menu == "📅 스마트 시간표(수정가능)":
                                     st.session_state.my_schedule.append(course)
                                     st.rerun()
 
-            # 분류 및 렌더링
-            must_list = [c for c in st.session_state.candidate_courses if c.get('priority') == 'High']
-            major_list = [c for c in st.session_state.candidate_courses if c.get('priority') == 'Medium' or ('전공' in c.get('classification', '') and c not in must_list)]
-            other_list = [c for c in st.session_state.candidate_courses if c not in must_list and c not in major_list]
+                # 분류 및 렌더링
+                must_list = [c for c in st.session_state.candidate_courses if c.get('priority') == 'High']
+                major_list = [c for c in st.session_state.candidate_courses if c.get('priority') == 'Medium' or ('전공' in c.get('classification', '') and c not in must_list)]
+                other_list = [c for c in st.session_state.candidate_courses if c not in must_list and c not in major_list]
 
-            with tab1:
-                if not must_list: st.info("해당 과목 없음")
-                for c in must_list: draw_course_row(c, "must")
-            with tab2:
-                if not major_list: st.info("해당 과목 없음")
-                for c in major_list: draw_course_row(c, "mj")
-            with tab3:
-                if not other_list: st.info("해당 과목 없음")
-                for c in other_list: draw_course_row(c, "ot")
+                with tab1:
+                    if not must_list: st.info("해당 과목 없음")
+                    for c in must_list: draw_course_row(c, "must")
+                with tab2:
+                    if not major_list: st.info("해당 과목 없음")
+                    for c in major_list: draw_course_row(c, "mj")
+                with tab3:
+                    if not other_list: st.info("해당 과목 없음")
+                    for c in other_list: draw_course_row(c, "ot")
 
         # [우측] 실시간 프리뷰
         with col_right:
             st.subheader("🗓️ 내 시간표")
             
+            # [추가] 신청 내역 리스트 (삭제 기능 제공)
+            if st.session_state.my_schedule:
+                with st.expander("📋 신청 내역 관리 (클릭하여 삭제)", expanded=True):
+                    for idx, added_course in enumerate(st.session_state.my_schedule):
+                        cols = st.columns([0.8, 0.2])
+                        cols[0].markdown(f"**{added_course['name']}** ({added_course['professor']})")
+                        if cols[1].button("❌", key=f"del_list_{idx}"):
+                             st.session_state.my_schedule.pop(idx)
+                             st.rerun()
+            
+            # 학점 바
             total_credits = sum([c.get('credits', 0) for c in st.session_state.my_schedule])
             st.write(f"**신청 학점:** {total_credits} / 21")
             st.progress(min(total_credits / 21, 1.0))
 
+            # HTML 테이블
             html_table = render_interactive_timetable(st.session_state.my_schedule)
             st.markdown(html_table, unsafe_allow_html=True)
             
