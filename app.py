@@ -182,9 +182,7 @@ class FirebaseManager:
 
 fb_manager = FirebaseManager()
 
-# -----------------------------------------------------------------------------
-# [PDF 로드 함수] - 기존 코드와 동일 (수정 없음)
-# -----------------------------------------------------------------------------
+# PDF 로드
 @st.cache_resource(show_spinner="PDF 문서를 분석 중입니다...")
 def load_knowledge_base():
     if not os.path.exists("data"): return ""
@@ -238,12 +236,12 @@ def ask_ai(question):
     except Exception as e: return f"❌ AI 오류: {str(e)}"
 
 # =============================================================================
-# 시간 충돌 감지 로직 (온라인 강의 예외 처리 유지)
+# [핵심 수정 1] 시간 충돌 감지 로직 (온라인 강의 예외 처리 추가)
 # =============================================================================
 def check_time_conflict(new_course, current_schedule):
     new_slots = new_course.get('time_slots', [])
     
-    # 온라인 강의(시간미정 또는 빈 리스트)는 충돌 검사 제외
+    # [수정] 온라인 강의(시간미정 또는 빈 리스트)는 충돌 검사 제외
     if not new_slots or new_slots == ["시간미정"] or not isinstance(new_slots, list):
         return False, None
 
@@ -262,14 +260,14 @@ def check_time_conflict(new_course, current_schedule):
     return False, None
 
 # =============================================================================
-# HTML 시간표 렌더러 (색상 구분 유지)
+# [핵심 수정 2] HTML 시간표 렌더러 (색상 구분 추가)
 # =============================================================================
 def render_interactive_timetable(schedule_list):
     days = ["월", "화", "수", "목", "금"]
     table_grid = {i: {d: {"text": "", "color": "#ffffff"} for d in days} for i in range(1, 10)}
     online_courses = []
 
-    # 파스텔톤 색상 팔레트 정의
+    # [수정] 파스텔톤 색상 팔레트 정의
     pastel_colors = [
         "#FFEBEE", "#E3F2FD", "#F3E5F5", "#E8F5E9", "#FFF3E0", 
         "#FBE9E7", "#E0F7FA", "#FFF8E1", "#F1F8E9", "#E1F5FE",
@@ -315,7 +313,7 @@ def render_interactive_timetable(schedule_list):
         html += f"<tr><td style='background-color: #f8f9fa; font-weight:bold;'>{i}</td>"
         for day in days:
             cell = table_grid[i][day]
-            # 셀 별 고유 색상 적용
+            # [수정] 셀 별 고유 색상 적용
             bg_color = cell["color"]
             content = cell["text"]
             border_style = "border: 1px solid #ddd;"
@@ -336,29 +334,32 @@ def render_interactive_timetable(schedule_list):
     return html
 
 # =============================================================================
-# [핵심 수정] AI 후보군 추출 (프롬프트 롤백 및 안정화)
+# [핵심 수정 3] AI 후보군 추출 (Prompt 강화: MSC/필수 분류)
 # =============================================================================
-def get_course_candidates_json(major, grade, semester, student_id, diagnosis_text=""):
+def get_course_candidates_json(major, grade, semester, diagnosis_text=""):
     llm = get_llm()
     if not llm: return []
-    
-    # [수정됨] 프롬프트 스타일을 기존의 '직관적 명령' 스타일로 복원하되, 학번/MSC 요구사항만 제약조건으로 추가
+
     prompt_template = """
     너는 [대학교 학사 데이터베이스 파서]이다. 
-    제공된 [수강신청자료집/시간표 문서]를 분석하여 **{major} {student_id} ({grade} {semester})** 학생이 수강 가능한 **모든 정규 개설 과목**을 JSON 리스트로 추출하라.
+    제공된 [수강신청자료집/시간표 문서]를 분석하여 **{major} {grade} {semester}** 학생이 수강 가능한 **모든 정규 개설 과목**을 JSON 리스트로 추출하라.
     
     [학생 정보]
     - 전공: {major}
-    - 학번: {student_id} (예: 25학번 -> 2025학년도 교육과정 적용)
     - 대상: {grade} {semester}
     
     [진단 결과 (재수강 체크용)]
     {diagnosis_context}
     
-    [필수 포함 및 분류 규칙]
-    1. **MSC/기초 필수:** {major} {student_id} 학생이 1학년 또는 해당 학기에 들어야 하는 필수 기초과목(미적분, 물리학, C프로그래밍 등)을 찾아 **Classification="MSC필수", Priority="High"**로 설정하라. (요람의 '필수' 표기가 없더라도 기초 필수라면 포함)
-    2. **교양 과목 (전체 포함):** 교양 과목(균형, 핵심, 일반 등)은 학정번호의 학년과 상관없이 **모두 포함**하라. (단, 동일 난이도 중복 수강 제한이 명시된 경우 Reason에 경고 기재)
-    3. **전공 과목:** 해당 학과의 전공 과목을 모두 포함하라.
+    [엄격한 제약 사항 & 분류 규칙]
+    1. **주관적 추천 금지:** 팩트만 기재하라.
+    2. **전수 조사:** 해당 학과/학년/학기 개설 과목을 모두 포함하라.
+    3. **분류(classification) 및 우선순위(priority) 설정 규칙 (중요):**
+       - **전공필수:** Priority = "High", Classification = "전공필수"
+       - **MSC/기초 필수 추론:** 문서에 '필수'라고 적혀있지 않더라도, **미적분학, 대학물리, C프로그래밍, 화학** 등 이공계 기초 필수 과목(MSC)이라면 반드시 **Priority = "High", Classification = "MSC필수"**로 설정하라.
+       - **교양필수:** 글쓰기, 영어, 광운인되기 등 학교 공통 필수 과목은 Priority = "Normal", Classification = "교양필수"
+       - **재수강:** 진단 결과에 명시된 재수강 과목은 Priority = "High", Classification = "재수강"
+       - **전공선택:** Priority = "Medium"
     
     [JSON 출력 포맷 예시]
     [
@@ -383,7 +384,6 @@ def get_course_candidates_json(major, grade, semester, student_id, diagnosis_tex
         chain = PromptTemplate.from_template(prompt_template) | llm
         return chain.invoke({
             "major": major, "grade": grade, "semester": semester,
-            "student_id": student_id, 
             "diagnosis_context": diagnosis_text, "context": PRE_LEARNED_DATA
         }).content
 
@@ -517,9 +517,7 @@ with st.sidebar:
                         st.session_state["menu_radio"] = log['menu'] 
                         st.rerun()
     st.divider()
-    
-    # [디버깅용] PDF 로드 상태 확인
-    if PRE_LEARNED_DATA: st.success(f"✅ PDF 문서 학습 완료 ({len(PRE_LEARNED_DATA)}자)")
+    if PRE_LEARNED_DATA: st.success(f"✅ PDF 문서 학습 완료")
     else: st.error("⚠️ 데이터 폴더에 PDF 파일이 없습니다.")
 
 # 메인 UI
@@ -574,42 +572,27 @@ elif st.session_state.current_menu == "📅 스마트 시간표(수정가능)":
     if "my_schedule" not in st.session_state: st.session_state.my_schedule = []
 
     with st.expander("🛠️ 수강신청 설정", expanded=not bool(st.session_state.candidate_courses)):
-        kw_departments = [
-            "전자공학과", "전자통신공학과", "전자융합공학과", "전기공학과", "전자재료공학과", "반도체시스템공학부", "로봇학부",
-            "컴퓨터정보공학부", "소프트웨어학부", "정보융합학부", "지능형로봇학과", "건축학과", "건축공학과", "화학공학과", "환경공학과",
-            "수학과", "전자바이오물리학과", "화학과", "스포츠융합과학과", "정보콘텐츠학과", "국어국문학과", "영어산업학과", 
-            "미디어커뮤니케이션학부", "산업심리학과", "동북아문화산업학부", "행정학과", "법학부", "국제학부", "자산관리학과",
-            "경영학부", "국제통상학부", "자율전공학부(자연)", "자율전공학부(인문)"
-        ]
-        
-        # [UI 수정] 학번 선택 추가 (4단 컬럼)
-        c1, c2, c3, c4 = st.columns(4)
+        kw_departments = ["전자공학과", "전자통신공학과", "전자융합공학과", "전기공학과", "컴퓨터정보공학부", "소프트웨어학부", "정보융합학부", "로봇학부", "경영학부"]
+        c1, c2, c3 = st.columns(3)
         major = c1.selectbox("학과", kw_departments, key="tt_major")
         grade = c2.selectbox("학년", ["1학년", "2학년", "3학년", "4학년"], key="tt_grade")
         semester = c3.selectbox("학기", ["1학기", "2학기"], key="tt_semester")
-        student_id = c4.selectbox("학번 (입학년도)", ["25학번", "24학번", "23학번", "22학번", "21학번 이전"], key="tt_student_id")
-        
         use_diagnosis = st.checkbox("☑️ 성적 진단 결과 반영", value=True)
         
         if st.button("🚀 강의 목록 불러오기 (AI Scan)", type="primary", use_container_width=True):
-            # [디버깅] 데이터 확인
-            if not PRE_LEARNED_DATA:
-                st.error("❌ PDF 데이터가 로드되지 않았습니다. 'data' 폴더를 확인하세요.")
-            else:
-                diag_text = ""
-                if use_diagnosis and st.session_state.graduation_analysis_result: diag_text = st.session_state.graduation_analysis_result
-                elif use_diagnosis and st.session_state.user: 
-                    saved = fb_manager.load_collection('graduation_diagnosis')
-                    if saved: diag_text = saved[0]['result']
-                
-                with st.spinner(f"수강신청 자료집에서 {major} {student_id} 교육과정을 분석 중입니다..."):
-                    # [함수 호출] student_id 추가 전달
-                    candidates = get_course_candidates_json(major, grade, semester, student_id, diag_text)
-                    if candidates:
-                        st.session_state.candidate_courses = candidates
-                        st.session_state.my_schedule = [] 
-                        st.rerun()
-                    else: st.error("강의 정보를 추출하지 못했습니다. 다시 시도해주세요.")
+            diag_text = ""
+            if use_diagnosis and st.session_state.graduation_analysis_result: diag_text = st.session_state.graduation_analysis_result
+            elif use_diagnosis and st.session_state.user: 
+                saved = fb_manager.load_collection('graduation_diagnosis')
+                if saved: diag_text = saved[0]['result']
+            
+            with st.spinner("요람에서 해당 학기 개설 과목을 전수 조사 중입니다..."):
+                candidates = get_course_candidates_json(major, grade, semester, diag_text)
+                if candidates:
+                    st.session_state.candidate_courses = candidates
+                    st.session_state.my_schedule = [] 
+                    st.rerun()
+                else: st.error("강의 추출 실패")
 
     if st.session_state.candidate_courses:
         st.divider()
@@ -643,8 +626,9 @@ elif st.session_state.current_menu == "📅 스마트 시간표(수정가능)":
                                     st.session_state.my_schedule.append(course)
                                     st.rerun()
 
-                # 탭 분류 필터링 로직 강화 (교양필수 키워드 추가)
-                must_keywords = ['필수', 'MSC', '기초', '핵심', '공통', '교양필수']
+                # [수정] 탭 분류 필터링 로직 강화
+                # 필수/MSC/기초/핵심/재수강 키워드가 포함되면 1번 탭으로 보냄
+                must_keywords = ['필수', 'MSC', '기초', '핵심']
                 
                 must_list = [
                     c for c in st.session_state.candidate_courses 
@@ -753,3 +737,4 @@ elif st.session_state.current_menu == "📈 성적 및 진로 진단":
                         st.rerun()
                     else: st.markdown(rsp)
             st.session_state.graduation_chat_history.append({"role": "assistant", "content": rsp})
+
