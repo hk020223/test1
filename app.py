@@ -473,34 +473,42 @@ def render_interactive_timetable(schedule_list):
     html += "</table>"
     return html
 
-# 3. AI 후보군 추출 (엄격한 데이터 파싱 - 주관 배제)
+# 3. AI 후보군 추출 (엄격한 데이터 파싱 + 휴리스틱 사고 로직 적용)
 def get_course_candidates_json(major, grade, semester, diagnosis_text=""):
     llm = get_llm()
     if not llm: return []
 
-    # [수정] Career/Recommendation 배제 및 전수 조사 중심 프롬프트
+    # [수정] 보고서의 '학생 휴리스틱 사고 과정'을 구현하는 프롬프트
+    # 학생이 시간표를 짤 때의 우선순위: 재수강(긴급) -> 필수(학년/전공) -> 전공선택 -> 교양 순서
     prompt_template = """
-    너는 [대학교 학사 데이터베이스 파서]이다. 
-    제공된 [수강신청자료집/시간표 문서]를 분석하여 **{major} {grade} {semester}** 학생이 수강 가능한 **모든 정규 개설 과목**을 JSON 리스트로 추출하라.
-    
+    너는 [광운대학교 수강신청 전략가]이다. 
+    단순한 데이터 추출이 아니라, 실제 **{major} {grade} {semester}** 학생이 졸업하기 위해 어떤 순서로 과목을 잡아야 하는지 **전략적 우선순위**를 판단하여 JSON을 생성하라.
+
     [학생 정보]
     - 전공: {major}
-    - 대상: {grade} {semester}
+    - 학년/학기: {grade} {semester}
+    - 현재 상황(진단 결과): {diagnosis_context}
+
+    [휴리스틱 우선순위 로직 (Strict Rule)]
+    다음 순서대로 **Priority** 필드를 엄격하게 할당하라.
     
-    [진단 결과 (재수강 체크용)]
-    {diagnosis_context}
+    1. **Priority: High (긴급/필수)**
+       - [진단 결과] 텍스트에 "재수강"이 필요하다고 명시된 과목 (최우선 순위). Reason에 "⚠️ 재수강 필수"라고 적을 것.
+       - 해당 학년/학기의 **전공 필수(Major Required)** 과목.
+       - (1학년일 경우) 대학영어, 대학수학, 화학, 물리학, 사고와표현(광운인되기) 등 **MSC/기초교양 필수** 과목.
     
-    [엄격한 제약 사항]
-    1. **주관적 추천 금지:** "취업에 유리함", "커리어 도움됨" 같은 추측성 설명은 절대 하지 마라.
-    2. **전수 조사:** 해당 학과/학년/학기에 배정된 과목은 하나도 빠뜨리지 말고 모두 포함하라. (분반이 다르면 모두 포함)
-    3. **제외 대상:** 타 학과 전용 과목, 해당 학년 대상이 아닌 과목은 리스트에서 제외하라.
-    4. **Reason 필드 작성 규칙:** - 기본적으로 **"이수구분(전공필수/선택/교양) | 학점"** 형식의 팩트만 적어라.
-       - 단, [진단 결과]에 "재수강"이 명시된 과목은 **"재수강 필수 대상"**이라고 적어라.
-    5. **Priority 설정:**
-       - 전공필수 또는 재수강 과목 = "High"
-       - 전공선택 = "Medium"
-       - 교양/기타 = "Normal"
-    
+    2. **Priority: Medium (전공 선택)**
+       - 위 'High'에 속하지 않는 모든 **전공 선택(Major Elective)** 과목.
+       - 학생의 전공({major})과 관련된 심화 과목.
+
+    3. **Priority: Normal (일반/교양)**
+       - 그 외 교양 선택, 일반 선택 과목.
+
+    [작성 규칙]
+    1. **전수 조사:** 제공된 문서에서 해당 학기 개설 과목을 빠짐없이 찾아라. (분반이 다르면 모두 포함)
+    2. **Reason 필드:** 왜 이 우선순위인지 설명하라. (예: "1학년 필수 교양 | 2학점", "전공필수 | 3학점", "재수강 권장 대상")
+    3. **Time Slots:** "월3", "수4" 와 같이 정확히 추출. 없으면 "시간미정".
+
     [JSON 출력 포맷 예시]
     [
         {{
@@ -513,15 +521,15 @@ def get_course_candidates_json(major, grade, semester, diagnosis_text=""):
             "priority": "High", 
             "reason": "전공필수 | 3학점"
         }},
-         {{
+        {{
             "id": "unique_id_2",
             "name": "대학영어",
             "professor": "Smith",
             "credits": 2,
             "time_slots": ["화1", "목1"],
             "classification": "교양필수",
-            "priority": "Normal", 
-            "reason": "교양필수 | 2학점"
+            "priority": "High", 
+            "reason": "1학년 기초필수"
         }}
     ]
     
@@ -548,7 +556,23 @@ def get_course_candidates_json(major, grade, semester, diagnosis_text=""):
              end = cleaned_json.rfind("]")
              if start != -1 and end != -1:
                  cleaned_json = cleaned_json[start:end+1]
-        return json.loads(cleaned_json)
+        
+        parsed_data = json.loads(cleaned_json)
+
+        # [Python Logic Post-Processing]
+        # LLM의 판단을 보완하기 위해 Python 레벨에서 한번 더 필터링 (Safety Guard)
+        for item in parsed_data:
+            # 1. 재수강 키워드 감지 시 강제 High
+            if diagnosis_text and item['name'] in diagnosis_text and "재수강" in diagnosis_text:
+                item['priority'] = 'High'
+                item['reason'] = "⚠️ 진단결과 기반 재수강 필수"
+            
+            # 2. 전공필수 텍스트 감지 시 High
+            if "전공필수" in item.get('classification', ''):
+                item['priority'] = 'High'
+                
+        return parsed_data
+
     except Exception as e:
         print(f"JSON Parsing Error: {e}")
         return []
@@ -752,7 +776,7 @@ with st.sidebar:
         progress_bar.progress(100)
         st.success("✅ 동기화 완료! 최신 데이터(2026-01-12 14:30 기준)가 반영되었습니다.")
         time.sleep(2)
-        st.rerun()         
+        st.rerun()          
     st.divider()
     st.caption("클릭하면 해당 화면으로 이동합니다.")
     log_container = st.container(height=300)
@@ -1129,8 +1153,3 @@ elif st.session_state.current_menu == "📈 성적 및 진로 진단":
             st.session_state.graduation_analysis_result = ""
             st.session_state.graduation_chat_history = []
             st.rerun()
-
-
-
-
-
