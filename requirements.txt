@@ -6,3 +6,4 @@ langchain-google-genai
 langchain-core
 firebase-admin
 pypdf
+
