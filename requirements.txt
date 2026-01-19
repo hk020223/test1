@@ -1,14 +1,8 @@
 streamlit
 pandas
-plotly
 langchain
 langchain-community
 langchain-google-genai
 langchain-core
 firebase-admin
-duckduckgo-search
 pypdf
-pillow
-requests
-faiss-cpu
-
